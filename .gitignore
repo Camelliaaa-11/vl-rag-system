@@ -1,0 +1,9 @@
+*.gguf
+*.bin
+*.pth
+*.safetensors
+venv/
+data/chroma_db/*
+.idea/
+*.pyc
+__pycache__/
