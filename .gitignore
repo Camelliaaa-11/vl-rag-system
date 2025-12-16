@@ -1,5 +1,4 @@
 *.gguf
-*.bin
 *.pth
 *.safetensors
 venv/
