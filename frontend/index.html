@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多模态问答助手</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 顶部新话题按钮 */
+        .header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            align-items: center;
+        }
+
+        .new-chat-btn {
+            background: none;
+            border: 1px solid #1a73e8;
+            color: #1a73e8;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+            .new-chat-btn:hover {
+                background-color: #f8f9fa;
+            }
+
+            .new-chat-btn i {
+                font-size: 12px;
+            }
+
+        /* 主内容区 */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 40px 20px;
+            transition: all 0.3s ease;
+        }
+
+            .main-content.input-at-top {
+                justify-content: center;
+                align-items: center;
+            }
+
+            .main-content.input-at-bottom {
+                justify-content: space-between;
+                padding-top: 20px;
+            }
+
+        /* 介绍文字 */
+        .intro-section {
+            text-align: center;
+            margin-bottom: 40px;
+            max-width: 600px;
+        }
+
+        .intro-title {
+            font-size: 28px;
+            font-weight: 300;
+            color: #202124;
+            margin-bottom: 16px;
+        }
+
+        .intro-subtitle {
+            font-size: 16px;
+            color: #5f6368;
+            line-height: 1.6;
+        }
+
+        /* 聊天区域 */
+        .chat-container {
+            flex: 1;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            overflow-y: auto;
+            padding: 20px 0;
+        }
+
+        .message {
+            margin-bottom: 24px;
+            padding: 0 20px;
+        }
+
+            .message.user {
+                text-align: right;
+            }
+
+            .message.bot {
+                text-align: left;
+            }
+
+        .message-content {
+            display: inline-block;
+            max-width: 70%;
+            text-align: left;
+        }
+
+        .user .message-content {
+            background-color: #1a73e8;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 18px 18px 4px 18px;
+        }
+
+        .bot .message-content {
+            background-color: #f8f9fa;
+            color: #202124;
+            padding: 12px 16px;
+            border-radius: 18px 18px 18px 4px;
+            border: 1px solid #f0f0f0;
+        }
+
+        /* 输入框区域 */
+        .input-section {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .input-container {
+            position: relative;
+            border: 2px solid #1a73e8;
+            border-radius: 24px;
+            background-color: white;
+            box-shadow: 0 2px 10px rgba(26, 115, 232, 0.1);
+            transition: all 0.3s ease;
+        }
+
+            .input-container:focus-within {
+                box-shadow: 0 4px 20px rgba(26, 115, 232, 0.2);
+            }
+
+        .input-wrapper {
+            display: flex;
+            align-items: center;
+            padding: 4px;
+        }
+
+        textarea {
+            flex: 1;
+            border: none;
+            outline: none;
+            padding: 16px 20px;
+            font-size: 16px;
+            resize: none;
+            max-height: 200px;
+            min-height: 56px;
+            background: transparent;
+            color: #202124;
+        }
+
+            textarea::placeholder {
+                color: #9aa0a6;
+            }
+
+        .send-button {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            margin-right: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+            .send-button:hover {
+                background-color: #1557b0;
+                transform: scale(1.05);
+            }
+
+            .send-button:disabled {
+                background-color: #c2e7ff;
+                cursor: not-allowed;
+                transform: none;
+            }
+
+        .file-upload-btn {
+            background: none;
+            border: none;
+            color: #5f6368;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 8px;
+            transition: all 0.2s;
+        }
+
+            .file-upload-btn:hover {
+                background-color: #f8f9fa;
+                color: #1a73e8;
+            }
+
+        /* 文件预览 */
+        .file-preview {
+            padding: 8px 20px 16px;
+            border-top: 1px solid #f0f0f0;
+            display: none;
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #5f6368;
+            font-size: 14px;
+        }
+
+        .remove-file {
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+            .remove-file:hover {
+                background-color: #ffeef0;
+            }
+
+        /* 动画效果 */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message {
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        /* 响应式调整 */
+        @media (max-width: 768px) {
+            .main-content {
+                padding: 20px 16px;
+            }
+
+            .intro-title {
+                font-size: 24px;
+            }
+
+            .message-content {
+                max-width: 85%;
+            }
+
+            .input-section {
+                padding: 0 16px;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <!-- 顶部新话题按钮 -->
+    <div class="header">
+        <button class="new-chat-btn" id="newChatBtn">
+            <i class="fas fa-plus"></i>
+            新话题
+        </button>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main-content input-at-top" id="mainContent">
+        <!-- 介绍文字（只在初始状态显示） -->
+        <div class="intro-section" id="introSection">
+            <h1 class="intro-title">多模态问答助手</h1>
+            <p class="intro-subtitle">
+                基于 Qwen2-VL-7B 多模态模型与本地知识库<br>
+                支持文字输入和图片上传，为您提供准确、及时的问答服务
+            </p>
+        </div>
+
+        <!-- 聊天记录容器 -->
+        <div class="chat-container" id="chatContainer"></div>
+
+        <!-- 输入框区域 -->
+        <div class="input-section">
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <button class="file-upload-btn" id="fileUploadBtn" title="上传图片">
+                        <i class="fas fa-image"></i>
+                    </button>
+                    <textarea id="textInput"
+                              placeholder="请输入您的问题..."
+                              rows="1"></textarea>
+                    <button class="send-button" id="sendButton">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+                <div class="file-preview" id="filePreview">
+                    <div class="file-info">
+                        <span id="fileName"></span>
+                        <span class="remove-file" id="removeFile">移除</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 隐藏的文件输入 -->
+    <input type="file" id="imageUpload" accept="image/*" style="display: none;">
+
+    <script>
+        // DOM元素
+        const mainContent = document.getElementById('mainContent');
+        const introSection = document.getElementById('introSection');
+        const chatContainer = document.getElementById('chatContainer');
+        const textInput = document.getElementById('textInput');
+        const sendButton = document.getElementById('sendButton');
+        const fileUploadBtn = document.getElementById('fileUploadBtn');
+        const imageUpload = document.getElementById('imageUpload');
+        const filePreview = document.getElementById('filePreview');
+        const fileName = document.getElementById('fileName');
+        const removeFile = document.getElementById('removeFile');
+        const newChatBtn = document.getElementById('newChatBtn');
+
+        let selectedImage = null;
+        let hasMessages = false;
+
+        // 自动调整输入框高度
+        textInput.addEventListener('input', function () {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+        });
+
+        // 上传图片
+        fileUploadBtn.addEventListener('click', () => {
+            imageUpload.click();
+        });
+
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                selectedImage = file;
+                fileName.textContent = file.name;
+                filePreview.style.display = 'block';
+
+                // 调整输入框容器样式
+                const inputContainer = document.querySelector('.input-container');
+                inputContainer.style.borderRadius = '24px 24px 12px 12px';
+            }
+        });
+
+        // 移除文件
+        removeFile.addEventListener('click', () => {
+            selectedImage = null;
+            imageUpload.value = '';
+            filePreview.style.display = 'none';
+            fileName.textContent = '';
+
+            // 恢复输入框容器样式
+            const inputContainer = document.querySelector('.input-container');
+            inputContainer.style.borderRadius = '24px';
+        });
+
+        // 添加消息到聊天区域
+        function addMessage(content, image, isUser) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            if (image) {
+                const imgInfo = document.createElement('div');
+                imgInfo.innerHTML = `<strong>📎 图片附件:</strong> ${image.name}`;
+                imgInfo.style.marginBottom = '8px';
+                imgInfo.style.fontSize = '14px';
+                contentDiv.appendChild(imgInfo);
+
+                const reader = new FileReader();
+                reader.onload = function (event) {
+                    const img = document.createElement('img');
+                    img.src = event.target.result;
+                    img.alt = '上传的图片';
+                    img.style.maxWidth = '200px';
+                    img.style.borderRadius = '8px';
+                    img.style.marginTop = '8px';
+                    contentDiv.appendChild(img);
+                };
+                reader.readAsDataURL(image);
+            }
+
+            if (content) {
+                const text = document.createElement('div');
+                text.innerHTML = content.replace(/\n/g, '<br>');
+                contentDiv.appendChild(text);
+            }
+
+            messageDiv.appendChild(contentDiv);
+            chatContainer.appendChild(messageDiv);
+
+            // 滚动到底部
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            // 如果有消息，调整布局
+            if (!hasMessages) {
+                hasMessages = true;
+                mainContent.classList.remove('input-at-top');
+                mainContent.classList.add('input-at-bottom');
+                introSection.style.display = 'none';
+            }
+        }
+
+        // 发送消息
+        async function sendMessage() {
+            const question = textInput.value.trim();
+            if (!question && !selectedImage) {
+                alert('请输入问题或选择图片');
+                return;
+            }
+
+            sendButton.disabled = true;
+
+            // 添加用户消息
+            addMessage(question, selectedImage, true);
+
+            // 清除输入
+            textInput.value = '';
+            textInput.style.height = 'auto';
+
+            // 清除文件
+            if (selectedImage) {
+                selectedImage = null;
+                imageUpload.value = '';
+                filePreview.style.display = 'none';
+                fileName.textContent = '';
+                const inputContainer = document.querySelector('.input-container');
+                inputContainer.style.borderRadius = '24px';
+            }
+
+            // 模拟AI回复（实际应该连接到后端）
+            setTimeout(() => {
+                const mockAnswers = [
+                    "这是基于知识库的模拟回答。当连接后端后，这里会显示真实的AI回复。",
+                    "根据本地知识库内容，这个问题可以这样解答...",
+                    "我已经分析了您提供的图片，结合问题进行了回答。",
+                    "这是一个多模态问答系统的示例回复。"
+                ];
+                const randomAnswer = mockAnswers[Math.floor(Math.random() * mockAnswers.length)];
+                addMessage(randomAnswer, null, false);
+
+                sendButton.disabled = false;
+                textInput.focus();
+            }, 1000);
+        }
+
+        // 新话题功能
+        function newChat() {
+            if (hasMessages) {
+                if (confirm('确定要开始新话题吗？当前对话将被清空。')) {
+                    // 清空聊天记录
+                    chatContainer.innerHTML = '';
+
+                    // 重置状态
+                    hasMessages = false;
+                    selectedImage = null;
+                    imageUpload.value = '';
+                    textInput.value = '';
+                    textInput.style.height = 'auto';
+                    filePreview.style.display = 'none';
+                    fileName.textContent = '';
+
+                    // 恢复初始布局
+                    mainContent.classList.remove('input-at-bottom');
+                    mainContent.classList.add('input-at-top');
+                    introSection.style.display = 'block';
+
+                    // 恢复输入框样式
+                    const inputContainer = document.querySelector('.input-container');
+                    inputContainer.style.borderRadius = '24px';
+
+                    textInput.focus();
+                }
+            }
+        }
+
+        // 事件监听
+        sendButton.addEventListener('click', sendMessage);
+
+        textInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        newChatBtn.addEventListener('click', newChat);
+
+        // 初始化：聚焦输入框
+        textInput.focus();
+    </script>
+</body>
+</html>
