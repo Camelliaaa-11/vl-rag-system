@@ -678,8 +678,8 @@
                     removeTypingIndicator();
 
                     // 添加AI回复
-                    if (data.answer) {
-                        addMessage(data.answer, null, false);
+                    if (data.data.answer) {
+                        addMessage(data.data.answer, null, false);
                     } else {
                         addMessage('收到回复但内容为空', null, false);
                     }

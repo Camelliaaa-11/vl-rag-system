@@ -194,6 +194,57 @@ class MuseumRetriever:
             return []
 
 
+# 添加在 retriever.py 文件的合适位置（可以在 ExhibitionRetriever 类后面）
+
+class Retriever:
+    """
+    为A同学提供的统一接口类
+    接口规范：retrieve(query: str, top_k=3) -> str
+    """
+
+    def __init__(self, persist_dir: str = "./data/chroma_db"):
+        """
+        初始化RAG检索器
+        persist_dir: Chroma数据库路径
+        """
+        # 复用现有的 ExhibitionRetriever
+        self.exhibition_retriever = ExhibitionRetriever("exhibition_docs")
+
+    def retrieve(self, query: str, top_k: int = 3) -> str:
+        """
+        核心检索接口 - A同学会调用这个
+
+        参数：
+            query: 用户问题
+            top_k: 返回几个相关文档
+
+        返回：
+            str: 检索到的知识文本，用\n\n分隔
+        """
+        # 调用现有的搜索功能
+        results = self.exhibition_retriever.search(query, top_k)
+
+        # 格式化为字符串（按文档要求的格式）
+        texts = []
+        for result in results:
+            content = result.get("content", "").strip()
+            if content:
+                texts.append(content)
+
+        # 用两个换行符分隔每个文档
+        return "\n\n".join(texts)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """返回知识库统计（可选，用于调试）"""
+        stats = self.exhibition_retriever.get_collection_statistics()
+        return {
+            "total_documents": stats.get("total_documents", 0),
+            "embedding_model": "all-MiniLM-L6-v2",
+            "status": "ready"
+        }
+
+__all__ = ['ExhibitionRetriever', 'Retriever']
+
 def main():
     """主函数，支持命令行参数"""
     parser = argparse.ArgumentParser(description='RAG检索系统 - 博物馆作品知识库')
