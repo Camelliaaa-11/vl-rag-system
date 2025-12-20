@@ -1,0 +1,32 @@
+# ============================================
+# RAG系统完整依赖列表
+# Python 3.9 兼容版本
+# ============================================
+
+# 核心数据处理
+pandas==1.5.3
+openpyxl==3.1.2
+numpy==1.24.3
+
+# 向量数据库
+chromadb==0.4.22
+
+# 文本嵌入模型
+sentence-transformers==2.2.2
+transformers==4.30.2
+tokenizers==0.13.3
+
+# ChromaDB依赖
+httpx==0.24.1
+pydantic==1.10.7
+onnxruntime==1.14.1
+posthog==2.4.0
+
+# 工具和工具链
+tqdm==4.65.0
+typing-extensions==4.5.0
+huggingface-hub==0.16.4
+protobuf==3.20.3
+
+# Windows额外依赖（如果需要）
+pysqlite3-binary
