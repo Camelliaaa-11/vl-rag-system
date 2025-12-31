@@ -7,8 +7,9 @@ import argparse
 from pathlib import Path
 import chromadb
 from chromadb.utils import embedding_functions
+from typing import Dict, Any, List  # <-- 添加这一行
 
-# 添加项目根目录到路径
+# 添加项目根目录到路径 # 确保这一行在 Orin 上能准确找到目录
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
@@ -194,7 +195,7 @@ class MuseumRetriever:
             return []
 
 
-# 添加在 retriever.py 文件的合适位置（可以在 ExhibitionRetriever 类后面）
+# 添加在 retriever.py 文件的合适位置（可以在 MuseumRetriever 类后面）
 
 class Retriever:
     """
@@ -207,8 +208,8 @@ class Retriever:
         初始化RAG检索器
         persist_dir: Chroma数据库路径
         """
-        # 复用现有的 ExhibitionRetriever
-        self.exhibition_retriever = ExhibitionRetriever("exhibition_docs")
+        # 复用现有的 MuseumRetriever
+        self.exhibition_retriever = MuseumRetriever()
 
     def retrieve(self, query: str, top_k: int = 3) -> str:
         """
@@ -243,7 +244,7 @@ class Retriever:
             "status": "ready"
         }
 
-__all__ = ['ExhibitionRetriever', 'Retriever']
+__all__ = ['MuseumRetriever', 'Retriever']
 
 def main():
     """主函数，支持命令行参数"""

@@ -1,4 +1,5 @@
 # backend/app.py
+from backend.llm.qwen_vl import QwenVLModel
 from fastapi import FastAPI, UploadFile, File, Form
 #uplaodfile,file处理用户输入内容，form是表单内容
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,7 +80,7 @@ async def call_model_api( #一个调用其他模型的函数
         } """
     
 app = FastAPI()
-
+model_inference = QwenVLModel()
 # 添加CORS
 app.add_middleware(
     CORSMiddleware,
@@ -106,57 +107,45 @@ def status_check():
 
 #前端调用的聊天接口
 @app.post("/chat")
-async def chat_endpoint( #异步处理
-    image: UploadFile = File(None),  # 前端可能不传图片
-    question: str = Form(None)       # 前端可能不传问题
+async def chat_endpoint(
+    image: UploadFile = File(None),
+    question: str = Form(None)
 ):
     print("=== 收到前端请求 ===")
-    print(f"图片: {image.filename if image else '无图片'}")
-    print(f"问题: {question if question else '无问题'}")
-     
-    # 若没有收到问题
-    if not question:
-        question = "这是什么作品？"
+    
+    # 【修复关键】初始化变量，防止报错
+    image_data = None 
+    
+    # 处理问题文本
+    current_question = question if question else "请识别这张图中的展品信息"
+
     # 读取图片（如果有）
-    image_data = None
     if image:
         try:
-            image_data = await image.read() #异步读取图片二进制数据
-            print(f"图片大小: {len(image_data) if image_data else 0} 字节")
+            image_data = await image.read()
+            print(f"✅ 图片读取成功: {len(image_data)} 字节")
         except Exception as e:
-            print(f"读取图片失败: {e}")
+            print(f"❌ 读取图片失败: {e}")
 
-    """ model_result = await call_ai_model_safe(question, image_data)
-    
-    if model_result["success"]:
-        status = "success"
-        answer = model_result["answer"]
-        confidence = "高"
-        message = "处理成功"
-    else:
-        status = "error"
-        answer = model_result["answer"]  # 可能是"模型处理失败"
-        confidence = "低"
-        message = f"模型调用失败: {model_result['error']}"  """
-    # TODO: 这里应该调用A同学的模型
-    # 暂时返回测试数据
-    
-    # 模拟不同情况
-    if image_data:
-        answer = f"✅ 已收到图片和问题\n图片名称: {image.filename}\n您的问题是: {question}"
-    else:
-        answer = f"✅ 已收到问题\n您的问题是: {question}"
-    return {
-        "status": "success",
-        "data": {
-            "answer": answer,
-            "context": "这是测试数据，实际会从知识库获取",
-            "confidence": "高"
-        },
-        "message": "处理成功",
-        "timestamp": datetime.datetime.now().isoformat()
-    }
-
+    # 调用你的模型进行推理（A调用B，C调用A的逻辑在这里闭环）
+    try:
+        # 这里会触发：RAG检索 -> 模型分析 -> 生成回答
+        result = model_inference.identify_product(image_data, current_question)
+        
+        return {
+            "status": "success",
+            "data": {
+                "answer": result["answer"],
+                "context": result.get("context", ""), # B同学检索出的知识背景
+                "confidence": "高"
+            },
+            "message": "处理成功",
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": f"模型处理异常: {str(e)}"}
 if __name__ == "__main__":
     uvicorn.run(
         app,               

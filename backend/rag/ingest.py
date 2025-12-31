@@ -1,6 +1,14 @@
 """
 ingest.py - 构建向量数据库
 """
+# --- 关键修复 1: 必须在所有导入前预加载 torch 以解决 DLL 1114 错误 ---
+try:
+    import torch
+    torch.empty(1)
+except:
+    pass
+# ----------------------------------------------------------------
+
 import os
 import sys
 from pathlib import Path
@@ -57,15 +65,25 @@ def build_database():
     # 使用本地BGE模型
     print("🤖 加载本地BGE模型...")
     try:
-        embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=str(model_path)
+        # 1. 先加载原始的嵌入函数
+        base_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=str(model_path),
+            device="cpu"
         )
+        # 这里是关键：定义一个显式的包装类，强制符合 ChromaDB 的签名要求
+        class EmbeddingWrapper:
+            def __call__(self, input):
+                # 内部调用原始类的逻辑，但参数名映射正确
+                return base_fn(input)
+        # 实例化这个包装类
+        embedding_fn = EmbeddingWrapper()
+            
         print("✅ 本地模型加载成功")
     except Exception as e:
         print(f"❌ 本地模型加载失败: {e}")
         return False
 
-    # 创建集合
+    # 创建集合 (现在 embedding_fn 的签名会被识别为 ['self', 'input'])
     print("📊 创建集合...")
     collection = client.create_collection(
         name="museum_local",
@@ -152,14 +170,14 @@ def build_database():
                     metadatas=all_metas[i:end_idx],
                     ids=all_ids[i:end_idx]
                 )
-                print(f"   已导入 {end_idx}/{len(all_docs)} 条记录")
+                print(f"    已导入 {end_idx}/{len(all_docs)} 条记录")
 
             print(f"\n✅ 导入完成!")
             print(f"📊 统计信息:")
-            print(f"   - 总作品数: {total_records}")
-            print(f"   - 展区数量: {len(sheet_names)}")
-            print(f"   - 平均文档长度: {sum(len(d) for d in all_docs) / len(all_docs):.0f} 字符")
-            print(f"   - 向量库位置: {chroma_path}")
+            print(f"    - 总作品数: {total_records}")
+            print(f"    - 展区数量: {len(sheet_names)}")
+            print(f"    - 平均文档长度: {sum(len(d) for d in all_docs) / len(all_docs):.0f} 字符")
+            print(f"    - 向量库位置: {chroma_path}")
         else:
             print("❌ 没有数据")
             return False
