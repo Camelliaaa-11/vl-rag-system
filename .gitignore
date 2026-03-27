@@ -1,8 +1,17 @@
 *.gguf
 *.pth
 *.safetensors
+*.tar.gz
+*.zip
+*.mp3
 venv/
-data/chroma_db/*
 .idea/
 *.pyc
 __pycache__/
+
+# Data and logs
+data/
+rviz_captured_images/
+logs/
+.vscode/
+.DS_Store
