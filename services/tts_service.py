@@ -1,32 +1,32 @@
 # -*- coding:utf-8 -*-
 import websocket
-import datetime
 import hashlib
 import base64
 import hmac
 import json
-from urllib.parse import urlencode
+import os
 import ssl
-from wsgiref.handlers import format_date_time
+import logging
 from datetime import datetime
 from time import mktime
-import os
-import time
+from urllib.parse import urlencode
+from wsgiref.handlers import format_date_time
+from config import Config
 
-class XF_TTS_Worker:
-    def __init__(self, APPID, APIKey, APISecret):
+logger = logging.getLogger("TTS")
+
+class TTSService:
+    def __init__(self, APPID=Config.XF_APPID, APIKey=Config.XF_API_KEY, APISecret=Config.XF_API_SECRET):
         self.APPID = APPID
         self.APIKey = APIKey
         self.APISecret = APISecret
         self.host = "ws-api.xfyun.cn"
 
-    def create_url(self):
+    def _create_url(self):
         url = 'wss://tts-api.xfyun.cn/v2/tts'
         now = datetime.now()
         date = format_date_time(mktime(now.timetuple()))
-        signature_origin = "host: " + self.host + "\n"
-        signature_origin += "date: " + date + "\n"
-        signature_origin += "GET /v2/tts HTTP/1.1"
+        signature_origin = f"host: {self.host}\ndate: {date}\nGET /v2/tts HTTP/1.1"
         signature_sha = hmac.new(self.APISecret.encode('utf-8'), signature_origin.encode('utf-8'),
                                  digestmod=hashlib.sha256).digest()
         signature_sha = base64.b64encode(signature_sha).decode(encoding='utf-8')
@@ -35,61 +35,51 @@ class XF_TTS_Worker:
         v = {"authorization": authorization, "date": date, "host": self.host}
         return url + '?' + urlencode(v)
 
-    def generate(self, text, output_path):
+    def generate_speech(self, text, output_path):
         """同步生成音频文件"""
-        self.text = text
-        self.output_path = output_path
-        
-        # 清除旧文件
         if os.path.exists(output_path):
             os.remove(output_path)
 
         def on_message(ws, message):
             try:
-                message = json.loads(message)
-                code = message["code"]
-                if code != 0:
-                    print(f"TTS Error: {message['message']}")
+                msg_body = json.loads(message)
+                if msg_body["code"] != 0:
+                    logger.error("TTS Error: %s", msg_body['message'])
                     return
                 
-                audio = message["data"]["audio"]
-                audio = base64.b64decode(audio)
-                status = message["data"]["status"]
+                audio = base64.b64decode(msg_body["data"]["audio"])
+                status = msg_body["data"]["status"]
 
-                with open(self.output_path, 'ab') as f:
+                with open(output_path, 'ab') as f:
                     f.write(audio)
 
-                if status == 2: # 合成结束
+                if status == 2:
                     ws.close()
             except Exception as e:
-                print("receive msg,but parse exception:", e)
+                logger.exception("TTS parsing exception: %s", e)
 
         def on_error(ws, error):
-            print("### TTS WebSocket Error:", error)
-
-        def on_close(ws, close_status_code, close_msg):
-            pass
+            logger.error("### TTS WebSocket Error: %s", error)
 
         def on_open(ws):
             d = {
                 "common": {"app_id": self.APPID},
                 "business": {
-                    "aue": "lame", # 使用 lame 生成 mp3
+                    "aue": "lame",
                     "sfl": 1,
                     "auf": "audio/L16;rate=16000",
-                    "vcn": "x4_yezi", # 波普先生推荐发音人：叶子（活力）
+                    "vcn": "x4_yezi",
                     "tte": "utf8"
                 },
                 "data": {
                     "status": 2,
-                    "text": str(base64.b64encode(self.text.encode('utf-8')), "utf-8")
+                    "text": str(base64.b64encode(text.encode('utf-8')), "utf-8")
                 }
             }
             ws.send(json.dumps(d))
 
-        ws_url = self.create_url()
-        ws = websocket.WebSocketApp(ws_url, on_message=on_message, on_error=on_error, on_close=on_close)
+        ws_url = self._create_url()
+        ws = websocket.WebSocketApp(ws_url, on_message=on_message, on_error=on_error)
         ws.on_open = on_open
-        # 运行直到合成结束
         ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
         return os.path.exists(output_path)

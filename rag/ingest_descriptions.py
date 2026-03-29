@@ -6,7 +6,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 # 路径配置
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent
 TXT_PATH = project_root / "data" / "raw_docs" / "industrial_design.txt"
 DB_PATH = project_root / "data" / "image_analysis_db"
 MODEL_PATH = project_root / "models" / "bge-small-zh-v1.5"

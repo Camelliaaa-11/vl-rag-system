@@ -1,116 +1,118 @@
 #!/usr/bin/env python3
 import rclpy
-from rclpy.node import Node
-from std_msgs.msg import String
 import os
 import json
 import threading
+import logging
+from rclpy.node import Node
+from std_msgs.msg import String
 from datetime import datetime
+from services.llm_service import LLMService
+from services.tts_service import TTSService
+from config import Config
 
-# 路径对齐
-from backend.llm.qwen_vl import QwenVLModel
-from tts_ws import XF_TTS_Worker
+# 初始化日志模块
+logger = logging.getLogger("RobotBrain")
 
 class StreamingPopProcessor(Node):
     def __init__(self):
         super().__init__('streaming_pop_processor')
         
-        # 1. 初始化模型与TTS
-        self.model = QwenVLModel()
-        # ！！！请务必填入真实的讯飞凭据！！！
-        self.tts = XF_TTS_Worker(APPID='812ac76a', APIKey='46834d00f6389d11d8cb73206c756e72', APISecret='ODM1NTYyNDU3MGY0NmVlZjc1MjA2MjVi')
+        # 1. 初始化核心服务
+        logger.info("🧠 [INIT] 正在启动机器人核心控制程序...")
+        self.model = LLMService()
+        self.tts = TTSService()
         
         # 2. 路径配置
-        self.latest_image_path = "rviz_captured_images/latest.jpg"
-        # 核心修复：确保 audio_dir 是绝对路径
-        self.audio_dir = os.path.abspath(os.path.join(os.getcwd(), "data", "audio_out"))
-        os.makedirs(self.audio_dir, exist_ok=True)
+        self.latest_image_path = str(Config.LATEST_IMAGE_PATH)
+        self.audio_dir = str(Config.AUDIO_OUT_DIR.absolute())
+        Config.AUDIO_OUT_DIR.mkdir(parents=True, exist_ok=True)
         
         # 3. 记忆管理
-        self.chat_history = [] # 用于保存上下文
-        self.max_history = 10  # 最多保留5轮对话(10条记录)
+        self.chat_history = []
+        self.max_history = 10
 
         # 4. ROS 通信
         self.sub = self.create_subscription(String, '/asr/user_input', self.on_input, 10)
         self.tts_pub = self.create_publisher(String, '/xunfei/tts_play', 10)
         
         self.sentence_seps = ["。", "！", "？", "\n", "；", "!", "?", "..."]
-        self.get_logger().info(f"✅ [波普先生] 语音存放路径: {self.audio_dir}")
-        self.get_logger().info("✅ [波普先生] 已上线，记忆系统已启动。")
+        
+        logger.info("✅ [SYSTEM] 语音输出路径: %s", self.audio_dir)
+        logger.info("✅ [SYSTEM] 导览讲解系统已就绪，正在等待交互...")
 
     def on_input(self, msg):
         user_text = msg.data.strip()
         if not user_text: return
         
-        print(f"\n🎧 [ASR 输入]: {user_text}")
+        # 记录 ASR 输入
+        logger.info("🎧 [ASR] 识别到语音输入: %s", user_text)
 
-        # 检查图像
+        # 检查最新捕捉图像
         image_data = None
         if os.path.exists(self.latest_image_path):
             with open(self.latest_image_path, "rb") as f:
                 image_data = f.read()
+            # logger.info("📸 [Vision] 已加载最新现场画面")
 
         current_sentence = ""
         full_reply = ""
-        print("🤖 [波普先生回复]: ", end="", flush=True)
+        
+        # 控制台实时回显 (仅用于开发者本地查看，不污染文件日志)
+        print("\n🤖 [BRAIN]: ", end="", flush=True)
 
-        # --- 核心修改：带上下文的流式调用 ---
-        # 这里的 identify_product_stream 需要在 qwen_vl.py 中修改以支持 history 参数
-        generator = self.model.identify_product_stream(image_data, user_text, history=self.chat_history)
+        # 流式调用模型接口
+        generator = self.model.generate_response_stream(image_data, user_text, history=self.chat_history)
 
         for chunk in generator:
             print(chunk, end="", flush=True)
             current_sentence += chunk
             full_reply += chunk
 
-            # 断句逻辑：只要有一句完整的话，立即合成语音
+            # 断句分段语音合成，提升响应速度
             if any(sep in chunk for sep in self.sentence_seps):
                 text_to_speak = current_sentence.strip()
                 if len(text_to_speak) > 1:
-                    # 异步执行 TTS 合成与指令下达
                     threading.Thread(target=self.run_tts_and_play, args=(text_to_speak,)).start()
                 current_sentence = ""
 
-        # 扫尾处理
+        # 尾部处理
         if current_sentence.strip():
             self.run_tts_and_play(current_sentence.strip())
 
-        # --- 更新记忆 ---
+        # 推理结束后，将完整回复记录进入系统日志文件
+        logger.info("🤖 [BRAIN] 生成完整回复: %s", full_reply)
+
+        # 更新对话上下文关联
         self.chat_history.append({"role": "user", "content": user_text})
         self.chat_history.append({"role": "assistant", "content": full_reply})
-        # 保持记忆长度
+        # 保持对话上下文窗口大小
         if len(self.chat_history) > self.max_history:
             self.chat_history = self.chat_history[-self.max_history:]
 
-
     def run_tts_and_play(self, text):
-        """合成 MP3 并按照机器人规范发布指令"""
+        """执行 TTS 音频合成与机器人端的播放指令下发"""
         try:
-            # 1. 生成文件名
+            # 1. 生成唯一时间戳文件名
             ts = datetime.now().strftime("%H%M%S_%f")
             audio_path = os.path.join(self.audio_dir, f"pop_{ts}.mp3")
             
-            # 2. TTS 合成文件
-            self.tts.generate(text, audio_path)
-            
-            # 3. 检查文件是否生成成功
-            if os.path.exists(audio_path):
-                # 4. 按照机器人文档要求的格式构建 JSON
-                # 统一使用 append 模式实现流式队列播放
+            # 2. 调用服务合成音频
+            if self.tts.generate_speech(text, audio_path):
+                # 3. 构造播放 JSON 指令并发布
                 play_cmd = {
                     "cmd": "append",
                     "file": audio_path
                 }
-                
                 msg = String()
                 msg.data = json.dumps(play_cmd)
                 self.tts_pub.publish(msg)
-                # self.get_logger().info(f"🔊 已发送播放指令: {audio_path}")
+                # logger.info("🔊 [TTS] 已发布朗读指令: %s", audio_path)
             else:
-                self.get_logger().error(f"❌ TTS文件生成失败: {audio_path}")
+                logger.error("❌ [TTS] 音频文件合成失败: %s", text[:20])
 
         except Exception as e:
-            self.get_logger().error(f"❌ 语音播报逻辑异常: {e}")
+            logger.exception("❌ [CRITICAL] 语音播报逻辑异常: %s", e)
 
 def main(args=None):
     rclpy.init(args=args)
@@ -118,7 +120,9 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        logger.warning("⚠️ [SYSTEM] 接收到退出指令，程序即将关闭")
+    except Exception as e:
+        logger.exception("❌ [CRITICAL] 程序运行崩溃: %s", e)
     finally:
         node.destroy_node()
         rclpy.shutdown()

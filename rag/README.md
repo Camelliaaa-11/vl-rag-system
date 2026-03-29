@@ -15,7 +15,7 @@ vl-rag-system/
 │   │   └── retriever.py       # ✅ 核心检索接口（你需要调用这个）
 │   ├── llm/                   # A同学的目录
 │   │   └── qwen_vl.py         # A同学的模型推理
-│   ├── app.py                 # C同学的FastAPI服务
+│   ├── main.py                # C同学的FastAPI服务
 │   └── requirements.txt       # 后端依赖文件
 ├── data/
 │   ├── raw_docs/
