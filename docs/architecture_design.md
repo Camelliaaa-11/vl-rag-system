@@ -6,42 +6,12 @@
 
 ## 1. 核心架构图 (Core Architecture Diagrams)
 
-<<<<<<< Updated upstream
-### 2.1 检索系统 (Retrieval System)
-**文件**: `rag/retriever.py`  
-**职责**: 基于结构化知识库执行多阶段RAG检索流程，从知识库中召回与当前问题最相关的展品信息，并通过混合检索与重排序机制提升检索结果的准确性与相关性。
-
-**核心接口**:
-- `retrieve(query, top_k)` — 执行完整检索流程（向量检索 + 可选BM25 + 重排序），返回相关知识片段  
-- `rerank(query, candidates)` — 对候选结果进行语义重排序  
-- `get_stats()` — 获取知识库统计信息
-
-### 2.2 记忆系统 (Memory System)
-**文件**: `services/memory_service.py`  
-**职责**: 管理短期对话流与长期用户知识沉淀。
-
-**全局状态**:
-- `short_term_buffer`: List[Message] — 滑动窗口式的短时对话缓冲
-
-**核心接口**:
-- `fetch_history(user_id)` — 获取指定用户的对话历史
-- `commit_turn(user_id, turn_data)` — 将一轮对话存入持久化记忆
-
-### 2.3 共鸣引擎 (Resonance Engine)
-**文件**: `services/resonance_engine.py`  
-**职责**: 实现“技心”人设的人格化算法，调节回应的情感质感与美学比重。
-
-**核心接口**:
-- `calculate_vibe(text_input)` — 评估交互内容的情感共鸣分值
-- `apply_persona_filter(raw_response)` — 将生成的原始文本通过人设协议进行滤镜化处理
-=======
 ### 1.1 系统全局架构
 ![系统架构图](架构图.png)
 
 ### 1.2 逻辑调用流程
 ![模块调用流程图](模块调用流程图.png)
 ![内部模块调用细节](内部模块调用细节图.png)
->>>>>>> Stashed changes
 
 ---
 
@@ -86,24 +56,69 @@
 
 #### 3.2.3 共鸣引擎 (Resonance Engine)
 - **文件**: `services/resonance_engine.py`
-- **职责**: 实现“技心”人设的人格化算法，调节回应的情感质感与美学比重。
-- **核心接口**: `calculate_vibe(text_input)`, `apply_persona_filter(raw_response)`
+- **职责**: 实现“技心”人设的人格化算法，调节回应的情感质感与美学比重，确保机器人的回应符合其设定的人格特征。
 
-### 3.3 感知与执行模块 (Perception & Execution)
-#### 3.3.1 视觉系统 (Vision System)
+**核心子模块**:
+1.  **人格化滤镜**: 基于“技心”人设协议，对生成的原始文本进行情感调节。
+2.  **情感共鸣计算**: 评估用户输入的情感倾向，调整回应的情感强度。
+3.  **美学比重控制**: 平衡技术准确性与情感表达的比例。
+
+**核心接口**:
+- `calculate_vibe(text_input, user_profile)` ⮕ 评估交互内容的情感共鸣分值，结合用户画像调整。
+- `apply_persona_filter(raw_response, context)` ⮕ 将生成的原始文本通过人设协议进行滤镜化处理。
+- `get_persona_config()` ⮕ 获取当前人设配置。
+- `update_persona_config(config)` ⮕ 更新人设配置参数。
+
+### 3.3 Agent系统 (Agent System)
+- **文件**: `services/agent_system.py`
+- **职责**: 管理与协调各类专业Agent，实现复杂任务的分解与执行，提升系统的智能化程度与任务处理能力。
+
+**核心子模块**:
+1.  **SceneAnalyzerAgent**: 环境与展品视觉分析，识别场景中的关键元素。
+2.  **DialogueAgent**: 对话策略与人设维护，确保对话流畅自然。
+3.  **ActionAgent**: 机器人动作与播放规划，协调物理行为与语音输出。
+
+**核心接口**:
+- `register_agent(agent_name, agent)` ⮕ 注册新的Agent实例。
+- `execute_agent(agent_name, task, context)` ⮕ 执行指定Agent的任务。
+- `get_agent_status(agent_name)` ⮕ 获取Agent的当前状态。
+- `coordinate_agents(task, context)` ⮕ 协调多个Agent共同完成复杂任务。
+
+### 3.4 感知与执行模块 (Perception & Execution)
+#### 3.4.1 视觉系统 (Vision System)
 - **文件**: `services/vision_service.py`
 - **职责**: 负责实时摄像头流的捕捉、快照分析及展品特征提取。
 - **核心接口**: `capture_snapshot()`, `get_latest_frame()`
 
-#### 3.3.2 听觉系统 (Hearing System)
+#### 3.4.2 听觉系统 (Hearing System)
 - **文件**: `services/asr_service.py`
-- **职责**: 负责音频降噪、语义断句及文字转化 (ASR)。
-- **核心接口**: `start_listening()`, `stop_listening()`
+- **职责**: 负责音频采集、云API调用及文字转化 (ASR)，将用户的语音输入转化为可处理的文本。
 
-#### 3.3.3 语言系统 (Language System)
+**核心子模块**:
+1.  **音频流处理**: 低延迟捕获与处理音频输入。
+2.  **云API集成**: 调用百度语音/腾讯云语音等云服务进行语音识别。
+3.  **本地备用**: 网络中断时使用轻量级本地模型作为备份。
+
+**核心接口**:
+- `start_listening()` ⮕ 开启麦克风监听流，准备接收语音输入。
+- `stop_listening()` ⮕ 停止监听并返回最终识别的文本。
+- `set_api_config(config)` ⮕ 设置云API配置参数。
+- `switch_recognition_mode(mode)` ⮕ 切换识别模式（云API/本地模型）。
+
+#### 3.4.3 语言系统 (Language System)
 - **文件**: `services/llm_service.py`
-- **职责**: 负责大模型的底层调用、流式输出管理及提示词注入。
-- **核心接口**: `generate_stream(prompts, history)`, `generate_sync(prompts)`
+- **职责**: 负责DeepSeek大模型的底层调用、流式输出管理及提示词注入，是系统的核心智能处理单元。
+
+**核心子模块**:
+1.  **多模态处理**: 支持文本与图像的混合输入。
+2.  **流式输出**: 实现实时响应与打字机效果。
+3.  **提示词工程**: 优化提示词结构，提升模型输出质量。
+
+**核心接口**:
+- `generate_stream(prompts, history, image_data)` ⮕ 发起流式模型预测，支持多模态输入。
+- `generate_sync(prompts, image_data)` ⮕ 发起同步模型预测，适用于非实时场景。
+- `load_model(model_config)` ⮕ 加载指定配置的DeepSeek模型。
+- `get_model_status()` ⮕ 获取当前模型的状态与资源使用情况。
 
 ---
 
@@ -129,7 +144,8 @@ vl-rag-system/
 │   ├── llm_service.py       # 🧠 语言大脑与 RAG 枢纽
 │   ├── tts_service.py       # 🔊 语音合成输出
 │   ├── asr_service.py       # 🎙️ 听觉识别服务
-│   └── vision_service.py    # 📸 视觉捕捉服务
+│   ├── vision_service.py    # 📸 视觉捕捉服务
+│   └── agent_system.py      # 🤖 Agent系统
 ├── memory/                  # 🧠 记忆系统 (根目录级核心模块)
 │   ├── static_rag.py        # 📚 静态检索与常识库
 │   ├── insight_archive.py   # 📁 对话洞察与交互档案
@@ -152,8 +168,10 @@ vl-rag-system/
 | :--- | :--- | :--- |
 | **机器人框架** | ROS 2 Humble | 组件化异步通信与硬件节点管理 |
 | **后端框架** | Python + FastAPI | 高性能、异步化的业务逻辑支撑 |
-| **多模态核心** | DeepSeek / Qwen | 核心的语义理解、推理与视觉对齐 |
+| **多模态核心** | DeepSeek | 核心的语义理解、推理与视觉对齐 |
 | **推理引擎** | Ollama / API | 驱动大语言模型的高效运行 |
 | **向量数据库** | ChromaDB | 实时的展品专业知识向量检索 |
 | **嵌入模型** | BGE-Small-ZH | 本地化的中文语义向量化 |
 | **前端展现** | HTML + Vue 3 | 现代、组件化的交互式仪表盘与视觉反馈 |
+| **语音识别** | 百度语音API | 高精度的语音识别服务 |
+| **语音合成** | TTS服务 | 自然的语音输出 |
