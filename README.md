@@ -20,8 +20,14 @@ VL-RAG-System 是一个集成了 **多模态大语言模型 (Qwen-VL)**、**RAG 
 
 ```text
 vl-rag-system/
+├── agents/                  # 🤖 代理层 (业务逻辑与策略引擎)
+│   ├── base_agent.py        # 🆔 代理基类
+│   ├── intro_agent.py       # 🏺 展品讲解代理
+│   ├── chat_agent.py        # 💬 深度聊天代理
+│   └── smalltalk_agent.py   # 🌸 闲聊情感代理
 ├── services/                # 🧱 核心服务层 (集成逻辑与 ROS 节点)
-│   ├── llm_service.py       # 🧠 大模型推理与 RAG 整合 (视觉大脑)
+│   ├── agent_manager.py     # 🧭 场景分发与路由管理
+│   ├── llm_service.py       # 🧠 大模型推理引导 (视觉大脑)
 │   ├── tts_service.py       # 🔊 语音合成服务
 │   ├── asr_service.py       # 🎙️ 语音识别服务 (原 voice_to_text.py)
 │   └── vision_service.py    # 📸 图像捕获服务 (原 rviz_image_capture_node.py)
