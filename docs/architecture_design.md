@@ -59,7 +59,7 @@
 - **数据结构定义 (Static Entity)**:
 ```python
 class Exhibit(BaseModel):
-    """静态展品实体模型"""
+    """静态展品实体模型（根据需求补充调整）"""
     exhibit_id: str               # 展品 ID (如: "robot_001")
     name: str                     # 展品名称 (如: "双子星机器人")
     location: str                 # 物理位置 (如: "一楼 A 厅 102 号")
@@ -277,28 +277,33 @@ class InsightEntry(BaseModel):
 
 ```text
 vl-rag-system/
-├── agents/                  # 🤖 代理层 (业务思维与策略路由)
+├── agents/                  # 🤖 代理层 (任务分解与执行大脑)
+│   ├── core/                # ⚙️ 核心原子代理 (功能逻辑实现)
+│   │   ├── scene_analyzer.py # 👁️ 环境分析与视觉特征抽象
+│   │   ├── dialogue_manager.py # 💬 语义对齐与对话策略控制
+│   │   └── action_planner.py # 🦾 动作/表情序列规划排程
 │   ├── base_agent.py        # 🆔 代理通用基类
 │   ├── intro_agent.py       # 🏺 展品讲解专有代理
 │   ├── chat_agent.py        # 💬 深度聊天专有代理
 │   └── smalltalk_agent.py   # 🌸 闲聊与情感专有代理
 ├── api/                     # 🌐 Web 接口层 (FastAPI 分层实现)
-│   ├── routers/             # 🚦 路由定义 (URL 路径)
-│   │   ├── chat_router.py
-│   │   └── system_router.py
-│   └── controllers/         # 🛡️ 控制逻辑 (参数校验与服务调用)
-│       ├── chat_controller.py
-│       └── system_controller.py
-├── services/                # 🧱 核心服务层 (业务逻辑与节点封装)
-│   ├── agent_manager.py     # 🧭 代理路由与场景分发
-│   ├── llm_service.py       # 🧠 语言大脑与核心生成
+│   ├── routers/             # 🚦 路由映射与状态码定义
+│   └── controllers/         # 🛡️ 参数校验与服务调用中转
+├── services/                # 🧱 核心服务层 (技术原子能力封装)
+│   ├── agent_manager.py     # 🧭 场景分发与 Agent 状态调度
+│   ├── resonance_engine.py  # 🎭 人设滤镜与情感共鸣计算
+│   ├── llm_service.py       # 🧠 背景注入与流式输出管理
 │   ├── tts_service.py       # 🔊 语音合成输出
-│   ├── asr_service.py       # 🎙️ 听觉识别服务
-│   └── vision_service.py    # 📸 视觉捕捉服务
-├── memory/                  # 🧠 记忆系统 (根目录级核心模块)
-│   ├── static_rag.py        # 📚 静态检索与常识库
-│   ├── insight_archive.py   # 📁 对话洞察与交互档案
-│   └── user_group_profiles.py # 👥 (新) 用户群体画像与类别管理中心
+│   ├── asr_service.py       # 🎙️ 听觉识别服务 (含云端/本地)
+│   └── vision_service.py    # 📸 视觉捕捉服务 (多模态输入)
+├── memory/                  # 🧠 记忆系统 (对外接口与长短时存储)
+│   ├── short_term_memory.py # 🗒️ 短期 JSON 缓存 (原话历史)
+│   ├── insight_archive.py   # 📁 长期见解库 (提炼后的结论/特征)
+│   └── user_group_profiles.py # 👥 用户群体画像 (群体策略库)
+├── rag/                     # 📚 检索引擎层 (底层检索原子能力)
+│   ├── ingest.py            # 🏗️ 文本知识入库脚本 (ChromaDB)
+│   ├── build_vector_db_new.py # 🖼️ 图像特征对齐入库脚本
+│   └── retriever.py         # 🔍 统一检索调度器 (Provider 模式实现)
 ├── local_model_processor.py # 🤖 系统总控调度器 (Orchestrator)
 ├── main.py                  # 🏁 Web 服务入口与启动配置
 ├── config.py                # ⚙️ 全局配置中心
