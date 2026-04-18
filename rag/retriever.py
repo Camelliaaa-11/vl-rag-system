@@ -26,29 +26,30 @@ class MuseumRetriever:
 
         # 检查文件
         if not self.chroma_path.exists():
-            print(f"❌ 向量数据库不存在: {self.chroma_path}")
-            print("💡 请先运行 'python rag/ingest.py' 构建数据库")
+            print(f"向量数据库不存在: {self.chroma_path}")
+            print("请先运行 'python rag/ingest.py' 构建数据库")
             sys.exit(1)
 
         if not self.model_path.exists():
-            print(f"❌ 模型不存在: {self.model_path}")
+            print(f"模型不存在: {self.model_path}")
             sys.exit(1)
 
-        print(f"🤖 模型路径: {self.model_path}")
-        print(f"🗄️  向量库: {self.chroma_path}")
+        print(f"模型路径: {self.model_path}")
+        print(f"向量库: {self.chroma_path}")
 
         # 初始化ChromaDB
         self.client = chromadb.PersistentClient(path=str(self.chroma_path))
 
         # 使用本地BGE模型
-        print("🤖 加载本地BGE模型...")
+        print("加载本地BGE模型...")
         try:
+            from chromadb.utils import embedding_functions
             self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=str(self.model_path)
             )
-            print("✅ 本地模型加载成功")
+            print("本地模型加载成功")
         except Exception as e:
-            print(f"❌ 本地模型加载失败: {e}")
+            print(f"本地模型加载失败: {e}")
             sys.exit(1)
 
         # 加载集合
@@ -61,11 +62,11 @@ class MuseumRetriever:
                 embedding_function=self.embedding_fn
             )
             count = self.collection.count()
-            print(f"✅ 加载向量数据库成功 ({count} 条记录)")
+            print(f"加载向量数据库成功 ({count} 条记录)")
             return count
         except Exception as e:
-            print(f"❌ 加载集合失败: {e}")
-            print("💡 请确保已运行 'python rag/ingest.py' 构建数据库")
+            print(f"加载集合失败: {e}")
+            print("请确保已运行 'python rag/ingest.py' 构建数据库")
             sys.exit(1)
 
     def retrieve(self, query: str, top_k: int = 3) -> str:

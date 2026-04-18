@@ -33,39 +33,35 @@ def build_database():
 
     # 检查文件
     if not excel_path.exists():
-        print(f"❌ Excel文件不存在: {excel_path}")
+        print(f"Excel文件不存在: {excel_path}")
         return False
 
     if not model_path.exists():
-        print(f"❌ 模型不存在: {model_path}")
+        print(f"模型不存在: {model_path}")
         return False
 
-    print(f"📁 Excel文件: {excel_path}")
-    print(f"🤖 模型路径: {model_path}")
-    print(f"🗄️  向量库: {chroma_path}")
+    print(f"Excel文件: {excel_path}")
+    print(f"模型路径: {model_path}")
+    print(f"向量库: {chroma_path}")
 
     # 检查是否已存在
     if chroma_path.exists():
-        print(f"\n⚠️  向量库已存在!")
-        choice = input("是否重新构建？(y/N): ").strip().lower()
-        if choice != 'y':
-            print("操作取消")
-            return True
-
+        print(f"\n向量库已存在，自动重新构建...")
         import shutil
-        print("🗑️  删除旧的向量库...")
+        print("删除旧的向量库...")
         shutil.rmtree(chroma_path)
 
-    print("\n🔄 开始构建向量数据库...")
+    print("\n开始构建向量数据库...")
 
     # 初始化ChromaDB
     os.makedirs(chroma_path, exist_ok=True)
     client = chromadb.PersistentClient(path=str(chroma_path))
 
     # 使用本地BGE模型
-    print("🤖 加载本地BGE模型...")
+    print("加载本地BGE模型...")
     try:
         # 1. 先加载原始的嵌入函数
+        from chromadb.utils import embedding_functions
         base_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=str(model_path),
             device="cpu"
@@ -78,13 +74,13 @@ def build_database():
         # 实例化这个包装类
         embedding_fn = EmbeddingWrapper()
             
-        print("✅ 本地模型加载成功")
+        print("本地模型加载成功")
     except Exception as e:
-        print(f"❌ 本地模型加载失败: {e}")
+        print(f"本地模型加载失败: {e}")
         return False
 
     # 创建集合 (现在 embedding_fn 的签名会被识别为 ['self', 'input'])
-    print("📊 创建集合...")
+    print("创建集合...")
     collection = client.create_collection(
         name="museum_local",
         embedding_function=embedding_fn,
@@ -92,12 +88,12 @@ def build_database():
     )
 
     # 导入数据
-    print("📥 从Excel导入数据...")
+    print("从Excel导入数据...")
 
     try:
         excel_file = pd.ExcelFile(excel_path)
         sheet_names = excel_file.sheet_names
-        print(f"📋 找到 {len(sheet_names)} 个工作表: {sheet_names}")
+        print(f"找到 {len(sheet_names)} 个工作表: {sheet_names}")
 
         all_docs = []
         all_metas = []
@@ -161,7 +157,7 @@ def build_database():
 
         # 批量导入
         if all_docs:
-            print(f"\n📤 导入 {total_records} 条记录...")
+            print(f"\n导入 {total_records} 条记录...")
             batch_size = 100
             for i in range(0, len(all_docs), batch_size):
                 end_idx = min(i + batch_size, len(all_docs))
@@ -172,23 +168,23 @@ def build_database():
                 )
                 print(f"    已导入 {end_idx}/{len(all_docs)} 条记录")
 
-            print(f"\n✅ 导入完成!")
-            print(f"📊 统计信息:")
+            print(f"\n导入完成!")
+            print(f"统计信息:")
             print(f"    - 总作品数: {total_records}")
             print(f"    - 展区数量: {len(sheet_names)}")
             print(f"    - 平均文档长度: {sum(len(d) for d in all_docs) / len(all_docs):.0f} 字符")
             print(f"    - 向量库位置: {chroma_path}")
         else:
-            print("❌ 没有数据")
+            print("没有数据")
             return False
 
     except Exception as e:
-        print(f"❌ 导入失败: {e}")
+        print(f"导入失败: {e}")
         import traceback
         traceback.print_exc()
         return False
 
-    print("\n🎉 向量数据库构建完成！")
+    print("\n向量数据库构建完成！")
     return True
 
 if __name__ == "__main__":
