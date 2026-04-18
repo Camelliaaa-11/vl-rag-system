@@ -10,9 +10,10 @@ class Config:
     PROMPTS_DIR = BASE_DIR / "prompts"
     LOG_FILE = BASE_DIR / "service.log"
     
-    # ... (原有配置保持不变)
+    # 人格配置路径
     PERSONA_DIR = DATA_DIR / "persona_setting_profile"
     PERSONA_JSON_PATH = PERSONA_DIR / "persona.json"
+    PERSONA_CONFIG_PATH = PERSONA_JSON_PATH  # 添加缺失的配置项
     
     # 向量数据库路径
     CHROMA_PATH = DATA_DIR / "chroma_db_local_model"
@@ -25,6 +26,16 @@ class Config:
     XF_APPID = os.getenv("XF_APPID", "812ac76a")
     XF_API_KEY = os.getenv("XF_API_KEY", "46834d00f6389d11d8cb73206c756e72")
     XF_API_SECRET = os.getenv("XF_API_SECRET", "ODM1NTYyNDU3MGY0NmVlZjc1MjA2MjVi")
+    
+    # --- 百度语音API配置 ---
+    BAIDU_ASR_APP_ID = os.getenv("BAIDU_ASR_APP_ID", "")
+    BAIDU_ASR_API_KEY = os.getenv("BAIDU_ASR_API_KEY", "")
+    BAIDU_ASR_SECRET_KEY = os.getenv("BAIDU_ASR_SECRET_KEY", "")
+    
+    # --- 腾讯云语音API配置 ---
+    TENCENT_ASR_APP_ID = os.getenv("TENCENT_ASR_APP_ID", "")
+    TENCENT_ASR_SECRET_ID = os.getenv("TENCENT_ASR_SECRET_ID", "")
+    TENCENT_ASR_SECRET_KEY = os.getenv("TENCENT_ASR_SECRET_KEY", "")
     
     # --- RAG 参数 ---
     RETRIEVAL_TOP_K = 3
@@ -63,7 +74,7 @@ class Config:
     @classmethod
     def ensure_dirs(cls):
         """确保必要的目录存在"""
-        for attr in ["DATA_DIR", "PROMPTS_DIR", "AUDIO_OUT_DIR", "VISION_SAVE_DIR", "ASR_SAVE_DIR"]:
+        for attr in ["DATA_DIR", "PROMPTS_DIR", "AUDIO_OUT_DIR", "VISION_SAVE_DIR", "ASR_SAVE_DIR", "PERSONA_DIR"]:
             path = getattr(cls, attr)
             path.mkdir(parents=True, exist_ok=True)
 
