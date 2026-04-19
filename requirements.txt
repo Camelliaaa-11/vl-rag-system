@@ -12,9 +12,9 @@ numpy==1.24.3
 chromadb==0.4.22
 
 # 文本嵌入模型
-sentence-transformers==2.2.2
-transformers==4.30.2
-tokenizers==0.13.3
+sentence-transformers>=3.0.0
+transformers>=4.51.0
+tokenizers>=0.21.0
 
 # ChromaDB依赖
 httpx>=0.27.0
@@ -25,7 +25,7 @@ posthog==2.4.0
 # 工具和工具链
 tqdm==4.65.0
 typing-extensions==4.5.0
-huggingface-hub==0.16.4
+huggingface-hub>=0.30.0
 protobuf==3.20.3
 
 # 大模型
@@ -37,4 +37,6 @@ pygame
 websocket-client
 fastapi
 uvicorn
+requests
+python-dotenv
 

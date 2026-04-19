@@ -1,10 +1,14 @@
 import os
 import logging
 from pathlib import Path
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).parent
+load_dotenv(BASE_DIR / ".env")
 
 class Config:
     # --- 核心路径配置 ---
-    BASE_DIR = Path(__file__).parent
+    BASE_DIR = BASE_DIR
     DATA_DIR = BASE_DIR / "data"
     MODELS_DIR = BASE_DIR / "models"
     PROMPTS_DIR = BASE_DIR / "prompts"
@@ -19,8 +23,13 @@ class Config:
     CHROMA_PATH = DATA_DIR / "chroma_db_local_model"
     
     # --- 模型配置 ---
-    LLM_MODEL_NAME = "qwen2.5:1.5b"
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")
+    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "deepseek-chat")
     EMBEDDING_MODEL_PATH = MODELS_DIR / "bge-small-zh-v1.5"
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    DEEPSEEK_CHAT_PATH = os.getenv("DEEPSEEK_CHAT_PATH", "/chat/completions")
+    OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:1.5b")
     
     # --- 讯飞语音服务配置 ---
     XF_APPID = os.getenv("XF_APPID", "812ac76a")
@@ -68,6 +77,7 @@ class Config:
         # 禁用三方库不必要的调试输出
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("ollama").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
         
         logging.info("🚀 [SYSTEM] 统一日志系统已启动，日志记录于: %s", cls.LOG_FILE)
 

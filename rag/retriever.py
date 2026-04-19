@@ -1,339 +1,414 @@
 """
-retriever.py - RAG搜索交互系统（支持命令行参数和交互模式）
+retriever.py - RAG 搜索系统
+
+当前主路径：
+- 优先使用 Qwen/Qwen3-Embedding-0.6B 本地模型
+- 在服务启动时全局预加载嵌入模型
+- 首次启动时自动把旧 collection 中的文档重建到新的 Qwen collection
+- 如果本地模型或依赖不可用，则退回轻量关键词检索
 """
-import os
-import sys
 import argparse
+import os
+import re
+import sys
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 import chromadb
-from chromadb.utils import embedding_functions
-from typing import Dict, Any, List  # <-- 添加这一行
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
+
+class GlobalQwenEmbeddingModel:
+    """全局单例嵌入模型，避免重复加载。"""
+
+    _model = None
+    _model_path = None
+    _load_error = None
+
+    @classmethod
+    def load(cls, model_path: Path):
+        if cls._model is not None and cls._model_path == str(model_path):
+            return cls._model
+
+        try:
+            from sentence_transformers import SentenceTransformer
+        except Exception as exc:
+            cls._load_error = exc
+            raise RuntimeError(f"sentence-transformers 不可用: {exc}") from exc
+
+        try:
+            cls._model = SentenceTransformer(str(model_path), trust_remote_code=True)
+            cls._model_path = str(model_path)
+            cls._load_error = None
+            print(f"Qwen3 Embedding 模型加载成功: {model_path}")
+            return cls._model
+        except Exception as exc:
+            cls._load_error = exc
+            raise RuntimeError(f"Qwen3 Embedding 模型加载失败: {exc}") from exc
+
+    @classmethod
+    def encode_queries(cls, texts: List[str]) -> List[List[float]]:
+        if cls._model is None:
+            raise RuntimeError("Qwen3 Embedding 模型尚未加载")
+        embeddings = cls._model.encode(texts, prompt_name="query", normalize_embeddings=True)
+        return embeddings.tolist()
+
+    @classmethod
+    def encode_documents(cls, texts: List[str]) -> List[List[float]]:
+        if cls._model is None:
+            raise RuntimeError("Qwen3 Embedding 模型尚未加载")
+        embeddings = cls._model.encode(texts, normalize_embeddings=True)
+        return embeddings.tolist()
+
+
 class MuseumRetriever:
+    SOURCE_COLLECTION_NAME = "museum_local"
+    TARGET_COLLECTION_NAME = "museum_qwen3_embedding"
+
     def __init__(self):
         print("=" * 60)
-        print(" 初始化RAG搜索系统")
+        print(" 初始化 RAG 搜索系统")
         print("=" * 60)
 
-        # 路径配置
+        self.fallback_mode = False
+        self.client = None
+        self.source_collection = None
+        self.collection = None
+
         self.data_dir = project_root / "data"
-        self.model_path = project_root / "models" / "bge-small-zh-v1.5"
+        self.model_path = project_root / "models" / "Qwen3-Embedding-0.6B"
+        self.legacy_model_path = project_root / "models" / "bge-small-zh-v1.5"
         self.chroma_path = self.data_dir / "chroma_db_local_model"
 
-        # 检查文件
         if not self.chroma_path.exists():
             print(f"向量数据库不存在: {self.chroma_path}")
             print("请先运行 'python rag/ingest.py' 构建数据库")
             sys.exit(1)
 
-        if not self.model_path.exists():
-            print(f"模型不存在: {self.model_path}")
-            sys.exit(1)
-
-        print(f"模型路径: {self.model_path}")
-        print(f"向量库: {self.chroma_path}")
-
-        # 初始化ChromaDB
         self.client = chromadb.PersistentClient(path=str(self.chroma_path))
+        self._load_source_collection()
+        self._init_embedding_backend()
+        self._prepare_target_collection()
 
-        # 使用本地BGE模型
-        print("加载本地BGE模型...")
+    def _load_source_collection(self):
         try:
-            from chromadb.utils import embedding_functions
-            self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=str(self.model_path)
-            )
-            print("本地模型加载成功")
-        except Exception as e:
-            print(f"本地模型加载失败: {e}")
-            sys.exit(1)
-
-        # 加载集合
-        self._load_collection()
-
-    def _load_collection(self):
-        try:
-            self.collection = self.client.get_collection(
-                name="museum_local",
-                embedding_function=self.embedding_fn
-            )
-            count = self.collection.count()
-            print(f"加载向量数据库成功 ({count} 条记录)")
-            return count
-        except Exception as e:
-            print(f"加载集合失败: {e}")
+            self.source_collection = self.client.get_collection(name=self.SOURCE_COLLECTION_NAME)
+            count = self.source_collection.count()
+            print(f"加载源向量数据库成功 ({count} 条记录)")
+        except Exception as exc:
+            print(f"加载源集合失败: {exc}")
             print("请确保已运行 'python rag/ingest.py' 构建数据库")
             sys.exit(1)
 
-    def retrieve(self, query: str, top_k: int = 3) -> str:
-        """
-        核心检索接口 - 返回知识文本（给A同学调用）
+    def _init_embedding_backend(self):
+        print(f"Qwen3 模型路径: {self.model_path}")
+        print(f"向量库路径: {self.chroma_path}")
 
-        参数：
-            query: 查询问题
-            top_k: 返回结果数量
+        if not self.model_path.exists():
+            self.fallback_mode = True
+            print("Qwen3 Embedding 模型目录不存在，切换到轻量关键词检索模式")
+            return
 
-        返回：
-            str: 格式化后的知识文本
-        """
         try:
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"]
+            GlobalQwenEmbeddingModel.load(self.model_path)
+            self.fallback_mode = False
+        except Exception as exc:
+            self.fallback_mode = True
+            print(f"Qwen3 Embedding 加载失败，切换到轻量关键词检索模式: {exc}")
+
+    def _prepare_target_collection(self):
+        if self.fallback_mode:
+            self.collection = self.source_collection
+            return
+
+        source_count = self.source_collection.count()
+        rebuild = False
+
+        try:
+            target = self.client.get_collection(name=self.TARGET_COLLECTION_NAME)
+            target_count = target.count()
+            if target_count != source_count:
+                rebuild = True
+            self.collection = target
+        except Exception:
+            rebuild = True
+
+        if rebuild:
+            self._rebuild_qwen_collection()
+
+        if self.collection is None:
+            self.collection = self.client.get_collection(name=self.TARGET_COLLECTION_NAME)
+
+        print(f"Qwen 检索集合就绪 ({self.collection.count()} 条记录)")
+
+    def _rebuild_qwen_collection(self):
+        print("开始构建 Qwen3 Embedding 检索集合...")
+        try:
+            self.client.delete_collection(self.TARGET_COLLECTION_NAME)
+        except Exception:
+            pass
+
+        target = self.client.create_collection(
+            name=self.TARGET_COLLECTION_NAME,
+            metadata={"description": "museum knowledge base with Qwen3 embeddings"},
+        )
+
+        payload = self.source_collection.get(include=["documents", "metadatas"])
+        documents = payload.get("documents", [])
+        metadatas = payload.get("metadatas", [])
+        ids = self.source_collection.get().get("ids", [])
+
+        batch_size = 16
+        for start in range(0, len(documents), batch_size):
+            end = min(start + batch_size, len(documents))
+            batch_docs = documents[start:end]
+            batch_metas = metadatas[start:end]
+            batch_ids = ids[start:end]
+            batch_embeddings = GlobalQwenEmbeddingModel.encode_documents(batch_docs)
+            target.add(
+                documents=batch_docs,
+                metadatas=batch_metas,
+                ids=batch_ids,
+                embeddings=batch_embeddings,
             )
+            print(f"已重建 {end}/{len(documents)} 条记录")
 
-            if not results['documents'][0]:
-                return "未找到相关作品"
+        self.collection = target
+        print("Qwen3 Embedding 检索集合构建完成")
 
-            # 格式化返回文本
-            formatted_results = []
-            for i in range(len(results['documents'][0])):
-                doc = results['documents'][0][i]
-                meta = results['metadatas'][0][i]
+    def _tokenize(self, text: str) -> List[str]:
+        normalized = (text or "").strip().lower()
+        if not normalized:
+            return []
 
-                # 构建单个作品的信息
-                work_info = []
-                work_info.append(f"作品名称：《{meta.get('作品名称', '')}》")
-                work_info.append(f"设计作者：{meta.get('设计作者', '')}")
-                work_info.append(f"指导老师：{meta.get('指导老师', '')}")
-                work_info.append(f"类别标签：{meta.get('类别标签', '')}")
-                work_info.append(f"呈现形式：{meta.get('呈现形式', '')}")
+        synonym_map = {
+            "展品": "作品",
+            "这个展品": "这个作品",
+            "那件展品": "那件作品",
+            "创作者": "设计作者",
+            "作者是谁": "设计作者",
+            "作者": "设计作者",
+            "哪个区": "所属展区",
+            "展区": "所属展区",
+        }
+        for source, target in synonym_map.items():
+            normalized = normalized.replace(source, target)
 
-                # 添加详细描述（只取前500字符）
-                doc_lines = doc.split('\n')
-                for line in doc_lines:
-                    if any(keyword in line for keyword in ['作品描述', '设计动机', '灵感来源', '设计目的', '技术特点']):
-                        if len(line) > 100:
-                            work_info.append(f"{line[:100]}...")
-                        else:
-                            work_info.append(line)
+        parts = re.split(r"[\s，。！？、；：,.!?:()（）\[\]【】《》\"'“”]+", normalized)
+        tokens: List[str] = []
+        stopwords = {
+            "请", "给我", "一个", "一下", "这件", "这个", "那个", "是不是", "有个",
+            "是什么", "什么", "是谁", "有", "的", "吗", "呢", "吧", "一下子", "我想",
+            "介绍", "可以", "帮我", "告诉我",
+        }
 
-                work_info.append(f"所属展区：{meta.get('所属展区', '')}")
-                formatted_results.append('\n'.join(work_info))
+        def add_token(value: str):
+            value = value.strip()
+            if not value or value in stopwords or len(value) == 1:
+                return
+            if value not in tokens:
+                tokens.append(value)
 
-            return '\n\n' + '='*60 + '\n\n'.join(formatted_results) + '\n\n' + '='*60
+        for part in parts:
+            add_token(part)
+            compact = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", part)
+            if len(compact) >= 2:
+                for size in (2, 3, 4):
+                    if len(compact) >= size:
+                        for idx in range(len(compact) - size + 1):
+                            add_token(compact[idx: idx + size])
 
-        except Exception as e:
-            return f"检索失败: {e}"
+        return tokens
+
+    def _fallback_search(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+        data = self.source_collection.get(include=["documents", "metadatas"])
+        documents = data.get("documents", [])
+        metadatas = data.get("metadatas", [])
+        query_tokens = self._tokenize(query)
+
+        scored_results: List[Dict[str, Any]] = []
+        for idx, doc in enumerate(documents):
+            meta = metadatas[idx] if idx < len(metadatas) else {}
+            searchable_text = " ".join(
+                [
+                    str(doc or ""),
+                    str(meta.get("作品名称", "")),
+                    str(meta.get("设计作者", "")),
+                    str(meta.get("指导老师", "")),
+                    str(meta.get("类别标签", "")),
+                    str(meta.get("呈现形式", "")),
+                    str(meta.get("所属展区", "")),
+                ]
+            ).lower()
+
+            score = 0
+            for token in query_tokens:
+                if token in searchable_text:
+                    score += 5 if len(token) >= 4 else 2
+
+            if score > 0:
+                scored_results.append({"document": doc, "metadata": meta, "score": score})
+
+        scored_results.sort(key=lambda item: item["score"], reverse=True)
+        return scored_results[:top_k]
+
+    def _semantic_search(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+        query_embedding = GlobalQwenEmbeddingModel.encode_queries([query])[0]
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
+            include=["documents", "metadatas", "distances"],
+        )
+
+        records: List[Dict[str, Any]] = []
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        for idx, doc in enumerate(documents):
+            meta = metadatas[idx] if idx < len(metadatas) else {}
+            distance = distances[idx] if idx < len(distances) else None
+            records.append(
+                {
+                    "document": doc,
+                    "metadata": meta,
+                    "score": distance,
+                }
+            )
+        return records
+
+    def _format_results(self, results: List[Dict[str, Any]]) -> str:
+        if not results:
+            return "未找到相关作品"
+
+        formatted_results = []
+        for item in results:
+            doc = item["document"]
+            meta = item["metadata"]
+
+            work_info = [
+                f"作品名称：《{meta.get('作品名称', '')}》",
+                f"设计作者：{meta.get('设计作者', '')}",
+                f"指导老师：{meta.get('指导老师', '')}",
+                f"类别标签：{meta.get('类别标签', '')}",
+                f"呈现形式：{meta.get('呈现形式', '')}",
+            ]
+
+            for line in doc.split("\n"):
+                if any(keyword in line for keyword in ["作品描述", "设计动机", "灵感来源", "设计目的", "技术特点"]):
+                    work_info.append(f"{line[:100]}..." if len(line) > 100 else line)
+
+            work_info.append(f"所属展区：{meta.get('所属展区', '')}")
+            formatted_results.append("\n".join(work_info))
+
+        return "\n\n" + "=" * 60 + "\n\n".join(formatted_results) + "\n\n" + "=" * 60
+
+    def retrieve(self, query: str, top_k: int = 3) -> str:
+        try:
+            if self.fallback_mode:
+                return self._format_results(self._fallback_search(query, top_k=top_k))
+            return self._format_results(self._semantic_search(query, top_k=top_k))
+        except Exception as exc:
+            return f"检索失败: {exc}"
 
     def get_stats(self) -> dict:
-        """返回知识库统计信息"""
         try:
             return {
-                "total_documents": self.collection.count(),
-                "embedding_model": "bge-small-zh-v1.5",
+                "total_documents": self.collection.count() if self.collection else 0,
+                "embedding_model": "Qwen/Qwen3-Embedding-0.6B" if not self.fallback_mode else "keyword-fallback",
                 "status": "ready",
-                "database_path": str(self.chroma_path)
+                "database_path": str(self.chroma_path),
+                "model_path": str(self.model_path),
+                "fallback_mode": self.fallback_mode,
             }
-        except:
+        except Exception:
             return {
                 "total_documents": 0,
                 "embedding_model": "unknown",
                 "status": "error",
-                "database_path": str(self.chroma_path)
+                "database_path": str(self.chroma_path),
+                "model_path": str(self.model_path),
+                "fallback_mode": self.fallback_mode,
             }
 
     def search(self, query: str, top_k: int = 5, show_full: bool = True):
-        """交互式搜索（带格式显示）"""
         print(f"\n🔍 搜索: '{query}'")
-
         try:
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"]
-            )
-
-            if not results['documents'][0]:
+            results = self._fallback_search(query, top_k) if self.fallback_mode else self._semantic_search(query, top_k)
+            if not results:
                 print("📭 未找到相关作品")
                 return []
 
-            print(f"✅ 找到 {len(results['documents'][0])} 个结果:")
-
-            for i in range(len(results['documents'][0])):
-                doc = results['documents'][0][i]
-                meta = results['metadatas'][0][i]
-                dist = results['distances'][0][i]
-                similarity = 1 - dist
-
-                print(f"\n【{i+1}】相似度: {similarity:.3f}")
+            print(f"✅ 找到 {len(results)} 个结果:")
+            for idx, item in enumerate(results, start=1):
+                doc = item["document"]
+                meta = item["metadata"]
+                score = item["score"]
+                print(f"\n【{idx}】得分/距离: {score}")
                 print(f"📌 作品: 《{meta.get('作品名称', '')}》")
                 print(f"👤 作者: {meta.get('设计作者', '')}")
                 print(f"👨‍🏫 指导: {meta.get('指导老师', '')}")
                 print(f"🏷️ 类别: {meta.get('类别标签', '')}")
                 print(f"🎨 形式: {meta.get('呈现形式', '')}")
-                print(f"📅 时间: {meta.get('创作时间', '')}")
                 print(f"📍 展区: {meta.get('所属展区', '')}")
-
                 if show_full:
                     print("\n📄 完整内容:")
                     print("-" * 60)
                     print(doc)
                     print("-" * 60)
-                else:
-                    print("\n📋 关键信息:")
-                    lines = doc.split('\n')
-                    displayed = 0
-                    for line in lines:
-                        if any(keyword in line for keyword in ['设计动机', '灵感来源', '设计目的', '技术特点', '设计理念']):
-                            if len(line) > 100:
-                                print(f"   {line[:100]}...")
-                            else:
-                                print(f"   {line}")
-                            displayed += 1
-                            if displayed >= 3:
-                                break
-
             return results
-
-        except Exception as e:
-            print(f"❌ 搜索失败: {e}")
+        except Exception as exc:
+            print(f"❌ 搜索失败: {exc}")
             return []
 
 
-# 添加在 retriever.py 文件的合适位置（可以在 MuseumRetriever 类后面）
-
 class Retriever:
-    """
-    为A同学提供的统一接口类
-    接口规范：retrieve(query: str, top_k=3) -> str
-    """
+    """兼容接口。"""
 
     def __init__(self, persist_dir: str = "./data/chroma_db"):
-        """
-        初始化RAG检索器
-        persist_dir: Chroma数据库路径
-        """
-        # 复用现有的 MuseumRetriever
+        del persist_dir
         self.exhibition_retriever = MuseumRetriever()
 
     def retrieve(self, query: str, top_k: int = 3) -> str:
-        """
-        核心检索接口 - A同学会调用这个
-
-        参数：
-            query: 用户问题
-            top_k: 返回几个相关文档
-
-        返回：
-            str: 检索到的知识文本，用\n\n分隔
-        """
-        # 调用现有的搜索功能
-        results = self.exhibition_retriever.search(query, top_k)
-
-        # 格式化为字符串（按文档要求的格式）
-        texts = []
-        for result in results:
-            content = result.get("content", "").strip()
-            if content:
-                texts.append(content)
-
-        # 用两个换行符分隔每个文档
-        return "\n\n".join(texts)
+        return self.exhibition_retriever.retrieve(query, top_k)
 
     def get_stats(self) -> Dict[str, Any]:
-        """返回知识库统计（可选，用于调试）"""
-        stats = self.exhibition_retriever.get_collection_statistics()
-        return {
-            "total_documents": stats.get("total_documents", 0),
-            "embedding_model": "all-MiniLM-L6-v2",
-            "status": "ready"
-        }
+        return self.exhibition_retriever.get_stats()
 
-__all__ = ['MuseumRetriever', 'Retriever']
+
+__all__ = ["MuseumRetriever", "Retriever"]
+
 
 def main():
-    """主函数，支持命令行参数"""
-    parser = argparse.ArgumentParser(description='RAG检索系统 - 博物馆作品知识库')
-    parser.add_argument('--query', '-q', type=str, help='直接查询的内容，如："这是什么作品？"')
-    parser.add_argument('--top_k', '-k', type=int, default=3, help='返回结果数量，默认3')
-    parser.add_argument('--simple', '-s', action='store_true', help='简洁模式（不显示完整内容）')
-    parser.add_argument('--stats', action='store_true', help='只显示统计信息')
-    parser.add_argument('--version', '-v', action='store_true', help='显示版本信息')
-
+    parser = argparse.ArgumentParser(description="RAG 检索系统 - 博物馆作品知识库")
+    parser.add_argument("--query", "-q", type=str, help="直接查询的内容")
+    parser.add_argument("--top_k", "-k", type=int, default=3, help="返回结果数量，默认 3")
+    parser.add_argument("--simple", "-s", action="store_true", help="简洁模式")
+    parser.add_argument("--stats", action="store_true", help="只显示统计信息")
     args = parser.parse_args()
 
-    # 显示版本信息
-    if args.version:
-        print("RAG检索系统 v1.0")
-        print("支持中文语义搜索的博物馆作品知识库")
-        print("使用本地BGE-small-zh模型 + ChromaDB")
-        return
+    retriever = MuseumRetriever()
 
-    print("=" * 60)
-    print("🎯 博物馆RAG检索系统")
-    print("=" * 60)
-
-    # 创建检索器实例
-    try:
-        retriever = MuseumRetriever()
-    except SystemExit:
-        return  # 初始化失败，直接退出
-
-    # 如果指定了 --stats，只显示统计
     if args.stats:
-        stats = retriever.get_stats()
-        print(f"📊 知识库统计信息:")
-        print(f"   - 总作品数: {stats['total_documents']}")
-        print(f"   - 向量模型: {stats['embedding_model']}")
-        print(f"   - 状态: {stats['status']}")
-        print(f"   - 数据库: {stats['database_path']}")
+        print(retriever.get_stats())
         return
 
-    # 如果指定了 --query，直接查询并退出
     if args.query:
-        print(f"\n🔍 查询: '{args.query}'")
         retriever.search(args.query, top_k=args.top_k, show_full=not args.simple)
         return
 
-    # 否则进入交互模式
-    print("\n" + "=" * 60)
-    print(f"📊 数据库统计:")
-    stats = retriever.get_stats()
-    print(f"   - 总作品数: {stats['total_documents']}")
-    print("=" * 60)
-
-    # 交互模式
-    print("\n💬 交互模式 (输入 'exit' 退出, 'simple' 切换简洁模式)")
-    print("💡 搜索提示:")
-    print("  1. 按技术搜索: '磁悬浮技术', '虚幻引擎5', 'RFID'")
-    print("  2. 按主题搜索: '传统文化', '环境保护', '儿童心理'")
-    print("  3. 按理念搜索: '场景驱动', '多模态交互', '视觉叙事'")
-    print("  4. 按人员搜索: '王心妍', '温馨', '林哲轩'")
-    print("  5. 输入 'simple' 切换简洁/完整显示")
-    print("-" * 60)
-
-    show_full = True
-
+    print("\n💬 交互模式 (输入 'exit' 退出)")
     while True:
-        try:
-            query = input("\n🔎 请输入查询: ").strip()
-
-            if query.lower() in ['exit', 'quit', 'q']:
-                print("👋 再见！")
-                break
-            elif query.lower() in ['simple', '简洁', '简', 's']:
-                show_full = not show_full
-                mode_text = "显示完整内容" if show_full else "显示关键信息"
-                print(f"📄 切换到: {mode_text}")
-                continue
-
-            if not query:
-                continue
-
-            # 执行搜索
-            retriever.search(query, show_full=show_full)
-
-        except KeyboardInterrupt:
-            print("\n👋 再见！")
+        query = input("\n🔎 请输入查询: ").strip()
+        if query.lower() in ["exit", "quit", "q"]:
             break
-        except Exception as e:
-            print(f"❌ 错误: {e}")
+        if not query:
+            continue
+        retriever.search(query, top_k=args.top_k, show_full=not args.simple)
+
 
 if __name__ == "__main__":
     main()

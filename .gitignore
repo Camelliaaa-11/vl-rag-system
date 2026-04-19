@@ -8,10 +8,15 @@ venv/
 .idea/
 *.pyc
 __pycache__/
+.env
 
 # Data and logs
 data/
 rviz_captured_images/
 logs/
+service.log
 .vscode/
 .DS_Store
+
+# Local embedding models
+models/
