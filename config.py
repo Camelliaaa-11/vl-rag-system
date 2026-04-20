@@ -21,6 +21,14 @@ class Config:
     
     # 向量数据库路径
     CHROMA_PATH = DATA_DIR / "chroma_db_local_model"
+
+    # 记忆系统路径
+    MEMORY_DIR = DATA_DIR / "memory"
+    MEMORY_SESSIONS_DIR = MEMORY_DIR / "sessions"
+    MEMORY_INSIGHT_DB = MEMORY_DIR / "insight_db"
+    MEMORY_USER_GROUPS_PATH = MEMORY_DIR / "user_groups.json"
+    MEMORY_SHORT_TERM_MAX_TURNS = 40
+    MEMORY_INSIGHT_COLLECTION = "insight_archive"
     
     # --- 模型配置 ---
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")
@@ -46,6 +54,12 @@ class Config:
     TENCENT_ASR_SECRET_ID = os.getenv("TENCENT_ASR_SECRET_ID", "")
     TENCENT_ASR_SECRET_KEY = os.getenv("TENCENT_ASR_SECRET_KEY", "")
     
+    # --- 服务端口 ---
+    # 8000 在部分开发机上会被 ComfyUI / 其它服务占用，默认改到 8765；
+    # 可通过 .env 中的 BACKEND_PORT 覆写。
+    BACKEND_HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
+    BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8765"))
+
     # --- RAG 参数 ---
     RETRIEVAL_TOP_K = 3
     
@@ -84,7 +98,11 @@ class Config:
     @classmethod
     def ensure_dirs(cls):
         """确保必要的目录存在"""
-        for attr in ["DATA_DIR", "PROMPTS_DIR", "AUDIO_OUT_DIR", "VISION_SAVE_DIR", "ASR_SAVE_DIR", "PERSONA_DIR"]:
+        for attr in [
+            "DATA_DIR", "PROMPTS_DIR", "AUDIO_OUT_DIR", "VISION_SAVE_DIR",
+            "ASR_SAVE_DIR", "PERSONA_DIR",
+            "MEMORY_DIR", "MEMORY_SESSIONS_DIR", "MEMORY_INSIGHT_DB",
+        ]:
             path = getattr(cls, attr)
             path.mkdir(parents=True, exist_ok=True)
 

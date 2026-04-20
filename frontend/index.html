@@ -588,7 +588,7 @@
         createApp({
             data() {
                 return {
-                    backendUrl: "http://localhost:8000",
+                    backendUrl: (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : "http://localhost:8765",
                     input: "",
                     loading: false,
                     status: "checking",
@@ -877,6 +877,7 @@
                                 <div class="meta-chip">当前模式：知识问答</div>
                                 <button class="ghost-button" @click="checkStatus">刷新状态</button>
                                 <button class="ghost-button" @click="clearConversation">清空对话</button>
+                                <a class="ghost-button" href="/memory-test" style="text-decoration:none;">记忆系统测试台 →</a>
                             </div>
                         </header>
 
