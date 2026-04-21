@@ -39,4 +39,8 @@ fastapi
 uvicorn
 requests
 python-dotenv
+jieba
+rank-bm25
+soundfile
+qwen-tts
 

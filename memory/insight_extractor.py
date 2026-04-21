@@ -1,4 +1,4 @@
-"""对话 -> 见解：调用 LLM 做异步内省。"""
+"""Conversation to insight extraction via LLM."""
 from __future__ import annotations
 
 import json
@@ -13,23 +13,18 @@ from .models import ChatTurn, InsightEntry
 
 logger = logging.getLogger("Memory.Extractor")
 
-
 LLMCaller = Callable[[List[dict]], str]
-
-
 DEFAULT_PROMPT_FILE = "insight_extraction.md"
 
 
+def _preview(text: str, limit: int = 240) -> str:
+    normalized = " ".join((text or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3] + "..."
+
+
 class InsightExtractor:
-    """
-    把一段对话打包喂给 LLM，解析出结构化 InsightEntry 列表。
-
-    调用者负责提供一个 LLMCaller，签名：
-        caller(messages: List[{"role": str, "content": str}]) -> str
-    常见做法是包一层 services.llm_service.LLMService：
-        lambda msgs: llm._call_deepseek(msgs)
-    """
-
     def __init__(
         self,
         llm_caller: LLMCaller,
@@ -47,9 +42,9 @@ class InsightExtractor:
         try:
             self._template_cache = self.prompt_path.read_text(encoding="utf-8")
         except Exception as exc:
-            logger.error("❌ [EXTRACTOR] 提示词加载失败 %s: %s", self.prompt_path, exc)
+            logger.error("[EXTRACTOR] load prompt failed %s: %s", self.prompt_path, exc)
             self._template_cache = (
-                "请从对话里提炼用户见解，以 JSON 数组返回，字段 topic/content/key_entities。\n"
+                "请从对话里提炼用户见解，以 JSON 数组返回，字段包含 topic/content/key_entities。\n"
                 "对话:\n---\n{conversation}\n---\n已知话题:{topic_subject}"
             )
         return self._template_cache
@@ -75,12 +70,12 @@ class InsightExtractor:
         except json.JSONDecodeError:
             array_match = re.search(r"\[.*\]", text, flags=re.DOTALL)
             if not array_match:
-                logger.warning("⚠️ [EXTRACTOR] 无法解析 LLM 输出: %s", text[:200])
+                logger.warning("[EXTRACTOR] cannot parse llm output: %s", _preview(text, 200))
                 return []
             try:
                 parsed = json.loads(array_match.group(0))
             except json.JSONDecodeError as exc:
-                logger.warning("⚠️ [EXTRACTOR] JSON 解析失败: %s", exc)
+                logger.warning("[EXTRACTOR] json parse failed: %s", exc)
                 return []
 
         if isinstance(parsed, dict):
@@ -109,16 +104,27 @@ class InsightExtractor:
     ) -> List[InsightEntry]:
         if not turns:
             return []
+
         conversation_text = self._format_conversation(turns)
         messages = self._build_messages(conversation_text, topic_subject)
+        logger.info(
+            "[EXTRACTOR] start user=%s session=%s turns=%d topic=%s conversation=%s",
+            user_id,
+            session_id,
+            len(turns),
+            topic_subject or "-",
+            _preview(conversation_text),
+        )
 
         try:
             raw = self.llm_caller(messages)
         except Exception as exc:
-            logger.error("❌ [EXTRACTOR] LLM 调用失败: %s", exc)
+            logger.error("[EXTRACTOR] llm call failed: %s", exc)
             return []
 
+        logger.info("[EXTRACTOR] raw output: %s", _preview(raw, 320))
         items = self._parse_llm_output(raw)
+
         entries: List[InsightEntry] = []
         for item in items:
             content = (item.get("content") or "").strip()
@@ -137,10 +143,18 @@ class InsightExtractor:
                     ][:5],
                 )
             )
-        logger.info(
-            "🪞 [EXTRACTOR] 抽取到 %d 条见解 (user=%s, session=%s)",
-            len(entries),
-            user_id,
-            session_id,
-        )
+
+        if not entries:
+            logger.info("[EXTRACTOR] no insight extracted user=%s session=%s", user_id, session_id)
+            return []
+
+        logger.info("[EXTRACTOR] extracted %d insights user=%s session=%s", len(entries), user_id, session_id)
+        for index, entry in enumerate(entries, start=1):
+            logger.info(
+                "[EXTRACTOR] insight #%d topic=%s content=%s entities=%s",
+                index,
+                entry.topic or "-",
+                entry.content,
+                entry.key_entities,
+            )
         return entries

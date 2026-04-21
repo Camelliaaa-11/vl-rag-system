@@ -8,6 +8,7 @@ import chromadb
 
 # 确保能导入 rag 包
 root_path = Path(__file__).resolve().parent
+project_root = root_path.parent
 sys.path.append(str(root_path))
 
 # 导入在 retriever 中定义的 Embedding 函数，确保一致性
@@ -19,7 +20,7 @@ from rag.retriever_v2_mix_Reranking import QwenEmbeddingFunction
 CONFIG = {
     "json_path": "data/processed/standard.json",
     "chroma_path": "data/chroma_db_qwen3",         # 新数据库路径
-    "model_path": "models/qwen3-embedding",       # 指向你下载好的模型文件夹
+    "model_path": "models/qwen3-embedding",       # 优先使用新的命名
     "collection_name": "works",
     "batch_size": 50,
 }
@@ -27,6 +28,17 @@ CONFIG = {
 class VectorBuilder:
     def __init__(self, force_rebuild: bool = True):
         self.force_rebuild = force_rebuild
+        self.model_path = self._resolve_model_path()
+
+    def _resolve_model_path(self) -> str:
+        candidates = [
+            project_root / "models" / "qwen3-embedding",
+            project_root / "models" / "Qwen3-Embedding-0.6B",
+        ]
+        for path in candidates:
+            if path.exists():
+                return str(path)
+        return CONFIG["model_path"]
 
     def extract_text_with_keys(self, obj, prefix: str = "") -> List[str]:
         texts = []
@@ -76,7 +88,7 @@ class VectorBuilder:
         # 2. 初始化客户端与模型
         client = chromadb.PersistentClient(path=str(chroma_path))
         # 使用 retriever 中定义的类来初始化 embedding_fn
-        embedding_fn = QwenEmbeddingFunction(CONFIG["model_path"])
+        embedding_fn = QwenEmbeddingFunction(self.model_path)
 
         # 3. 创建集合
         collection = client.create_collection(

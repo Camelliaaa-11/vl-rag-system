@@ -1,36 +1,34 @@
-import os
 import logging
+import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
+
 class Config:
-    # --- 核心路径配置 ---
     BASE_DIR = BASE_DIR
     DATA_DIR = BASE_DIR / "data"
     MODELS_DIR = BASE_DIR / "models"
     PROMPTS_DIR = BASE_DIR / "prompts"
     LOG_FILE = BASE_DIR / "service.log"
-    
-    # 人格配置路径
+
     PERSONA_DIR = DATA_DIR / "persona_setting_profile"
     PERSONA_JSON_PATH = PERSONA_DIR / "persona.json"
-    PERSONA_CONFIG_PATH = PERSONA_JSON_PATH  # 添加缺失的配置项
-    
-    # 向量数据库路径
-    CHROMA_PATH = DATA_DIR / "chroma_db_local_model"
+    PERSONA_CONFIG_PATH = PERSONA_JSON_PATH
 
-    # 记忆系统路径
+    CHROMA_PATH = DATA_DIR / "chroma_db_local_model"
+    CHROMA_ANONYMIZED_TELEMETRY = os.getenv("CHROMA_ANONYMIZED_TELEMETRY", "false").lower() == "true"
+
     MEMORY_DIR = DATA_DIR / "memory"
     MEMORY_SESSIONS_DIR = MEMORY_DIR / "sessions"
     MEMORY_INSIGHT_DB = MEMORY_DIR / "insight_db"
     MEMORY_USER_GROUPS_PATH = MEMORY_DIR / "user_groups.json"
     MEMORY_SHORT_TERM_MAX_TURNS = 40
     MEMORY_INSIGHT_COLLECTION = "insight_archive"
-    
-    # --- 模型配置 ---
+
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")
     LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "deepseek-chat")
     EMBEDDING_MODEL_PATH = MODELS_DIR / "bge-small-zh-v1.5"
@@ -38,74 +36,99 @@ class Config:
     DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     DEEPSEEK_CHAT_PATH = os.getenv("DEEPSEEK_CHAT_PATH", "/chat/completions")
     OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:1.5b")
-    
-    # --- 讯飞语音服务配置 ---
-    XF_APPID = os.getenv("XF_APPID", "812ac76a")
-    XF_API_KEY = os.getenv("XF_API_KEY", "46834d00f6389d11d8cb73206c756e72")
-    XF_API_SECRET = os.getenv("XF_API_SECRET", "ODM1NTYyNDU3MGY0NmVlZjc1MjA2MjVi")
-    
-    # --- 百度语音API配置 ---
+
     BAIDU_ASR_APP_ID = os.getenv("BAIDU_ASR_APP_ID", "")
     BAIDU_ASR_API_KEY = os.getenv("BAIDU_ASR_API_KEY", "")
     BAIDU_ASR_SECRET_KEY = os.getenv("BAIDU_ASR_SECRET_KEY", "")
-    
-    # --- 腾讯云语音API配置 ---
+
     TENCENT_ASR_APP_ID = os.getenv("TENCENT_ASR_APP_ID", "")
     TENCENT_ASR_SECRET_ID = os.getenv("TENCENT_ASR_SECRET_ID", "")
     TENCENT_ASR_SECRET_KEY = os.getenv("TENCENT_ASR_SECRET_KEY", "")
-    
-    # --- 服务端口 ---
-    # 8000 在部分开发机上会被 ComfyUI / 其它服务占用，默认改到 8765；
-    # 可通过 .env 中的 BACKEND_PORT 覆写。
+
     BACKEND_HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
     BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8765"))
+    BACKEND_RELOAD = os.getenv("BACKEND_RELOAD", "false").lower() == "true"
 
-    # --- RAG 参数 ---
     RETRIEVAL_TOP_K = 3
-    
-    # --- 机器人交互配置 ---
+
     VISION_SAVE_DIR = BASE_DIR / "rviz_captured_images"
     LATEST_IMAGE_PATH = VISION_SAVE_DIR / "latest.jpg"
-    
+
     ASR_SAVE_DIR = DATA_DIR / "voice_to_text"
     AUDIO_OUT_DIR = DATA_DIR / "audio_out"
-    
-    # 服务文件路径
+
+    XF_APPID = os.getenv("XF_APPID", "812ac76a")
+    XF_API_KEY = os.getenv("XF_API_KEY", "46834d00f6389d11d8cb73206c756e72")
+    XF_API_SECRET = os.getenv("XF_API_SECRET", "ODM1NTYyNDU3MGY0NmVlZjc1MjA2MjVi")
+
+    TTS_PROVIDER = os.getenv("TTS_PROVIDER", "xf").lower()
+    TTS_OUTPUT_DIR = AUDIO_OUT_DIR
+    TTS_DEFAULT_VOICE = os.getenv("TTS_DEFAULT_VOICE", "")
+    TTS_DEVICE = os.getenv("TTS_DEVICE", "cuda")
+
+    QWEN_TTS_MODEL_NAME = os.getenv("QWEN_TTS_MODEL_NAME", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice")
+    QWEN_TTS_MODEL_PATH = os.getenv("QWEN_TTS_MODEL_PATH", QWEN_TTS_MODEL_NAME)
+    QWEN_TTS_VOICE = os.getenv("QWEN_TTS_VOICE", "Vivian")
+    QWEN_TTS_LANGUAGE = os.getenv("QWEN_TTS_LANGUAGE", "zh")
+    QWEN_TTS_STYLE_PROMPT = os.getenv("QWEN_TTS_STYLE_PROMPT", "")
+    QWEN_TTS_DTYPE = os.getenv("QWEN_TTS_DTYPE", "bfloat16").lower()
+    QWEN_TTS_SAMPLE_RATE = int(os.getenv("QWEN_TTS_SAMPLE_RATE", "24000"))
+    QWEN_TTS_OUTPUT_FORMAT = os.getenv("QWEN_TTS_OUTPUT_FORMAT", "wav").lower()
+
     SERVICES_DIR = BASE_DIR / "services"
     ASR_SERVICE_PATH = SERVICES_DIR / "asr_service.py"
     VISION_SERVICE_PATH = SERVICES_DIR / "vision_service.py"
     LLM_SERVICE_PATH = SERVICES_DIR / "llm_service.py"
     TTS_SERVICE_PATH = SERVICES_DIR / "tts_service.py"
 
+    _LOGGING_INITIALIZED = False
+
     @classmethod
     def setup_logging(cls):
-        """全局日志初始化：同时输出到控制台和 service.log"""
+        if cls._LOGGING_INITIALIZED:
+            return
+
+        cls.LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        cls.LOG_FILE.write_text("", encoding="utf-8")
+
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            force=True,
             handlers=[
-                logging.FileHandler(cls.LOG_FILE, encoding='utf-8'),
-                logging.StreamHandler()
-            ]
+                logging.FileHandler(cls.LOG_FILE, mode="a", encoding="utf-8"),
+                logging.StreamHandler(),
+            ],
         )
-        # 禁用三方库不必要的调试输出
+
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("ollama").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
-        
-        logging.info("🚀 [SYSTEM] 统一日志系统已启动，日志记录于: %s", cls.LOG_FILE)
+        logging.getLogger("chromadb").setLevel(logging.ERROR)
+        logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
+        logging.getLogger("posthog").setLevel(logging.ERROR)
+        logging.getLogger("backoff").setLevel(logging.ERROR)
+
+        cls._LOGGING_INITIALIZED = True
+        logging.info("[SYSTEM] 统一日志系统已启动，日志记录于: %s", cls.LOG_FILE)
 
     @classmethod
     def ensure_dirs(cls):
-        """确保必要的目录存在"""
         for attr in [
-            "DATA_DIR", "PROMPTS_DIR", "AUDIO_OUT_DIR", "VISION_SAVE_DIR",
-            "ASR_SAVE_DIR", "PERSONA_DIR",
-            "MEMORY_DIR", "MEMORY_SESSIONS_DIR", "MEMORY_INSIGHT_DB",
+            "DATA_DIR",
+            "PROMPTS_DIR",
+            "AUDIO_OUT_DIR",
+            "TTS_OUTPUT_DIR",
+            "VISION_SAVE_DIR",
+            "ASR_SAVE_DIR",
+            "PERSONA_DIR",
+            "MEMORY_DIR",
+            "MEMORY_SESSIONS_DIR",
+            "MEMORY_INSIGHT_DB",
         ]:
             path = getattr(cls, attr)
             path.mkdir(parents=True, exist_ok=True)
 
-# 初始化
+
 Config.ensure_dirs()
 Config.setup_logging()

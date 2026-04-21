@@ -1,24 +1,32 @@
-"""记忆总线 (Memory Hub)：对外唯一入口。"""
+"""Memory hub: single public entry for chat memory flows."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
+from config import Config
+
 from .insight_archive import InsightArchive
-from .insight_extractor import InsightExtractor, LLMCaller
-from .models import ChatTurn, InsightEntry, UserGroupProfile
+from .insight_extractor import InsightExtractor
+from .models import InsightEntry, UserGroupProfile
 from .short_term_memory import ShortTermMemory
 from .user_group_profiles import UserGroupProfiles
 
 logger = logging.getLogger("Memory.Hub")
 
 
+def _model_to_dict(model):
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
+
+
 @dataclass
 class RecallResult:
-    """recall() 的统一返回结构。"""
-
     raw_history: List[Dict[str, str]] = field(default_factory=list)
     insights: List[InsightEntry] = field(default_factory=list)
     user_group: Optional[UserGroupProfile] = None
@@ -27,27 +35,13 @@ class RecallResult:
     def to_dict(self) -> Dict:
         return {
             "raw_history": list(self.raw_history),
-            "insights": [insight.dict() for insight in self.insights],
-            "user_group": self.user_group.dict() if self.user_group else None,
+            "insights": [_model_to_dict(insight) for insight in self.insights],
+            "user_group": _model_to_dict(self.user_group) if self.user_group else None,
             "combined_context": self.combined_context,
         }
 
 
 class MemoryHub:
-    """
-    统一协调 ShortTermMemory / InsightArchive / UserGroupProfiles。
-
-    使用方式：
-        hub = MemoryHub()                                  # 只读 + 存储
-        hub.attach_extractor(InsightExtractor(llm_caller)) # 可选: 启用内省
-
-        hub.record_turn(session_id, "user", "这是什么作品？")
-        hub.record_turn(session_id, "assistant", "这是《永栖所》……")
-
-        result = hub.recall("《永栖所》的作者是谁", user_id="u1", session_id="s1")
-        await hub.reflect_on_conversation(session_id="s1", user_id="u1")
-    """
-
     def __init__(
         self,
         short_term: Optional[ShortTermMemory] = None,
@@ -59,14 +53,29 @@ class MemoryHub:
         self.insights = insight_archive or InsightArchive()
         self.user_groups = user_groups or UserGroupProfiles()
         self.extractor: Optional[InsightExtractor] = extractor
-        logger.info("🧠 [HUB] 初始化完成")
+        self._reflection_state_path = Path(Config.MEMORY_DIR) / "reflection_state.json"
+        self._reflection_state = self._load_reflection_state()
+        logger.info("Memory hub ready")
 
-    def attach_extractor(
-        self,
-        extractor_or_caller,
-        **extractor_kwargs,
-    ) -> None:
-        """允许传入 InsightExtractor，或直接传 LLMCaller 自动构造一个。"""
+    def _load_reflection_state(self) -> Dict[str, int]:
+        try:
+            if self._reflection_state_path.exists():
+                raw = json.loads(self._reflection_state_path.read_text(encoding="utf-8"))
+                return {str(k): int(v) for k, v in raw.items()}
+        except Exception as exc:
+            logger.warning("Failed to load reflection state: %s", exc)
+        return {}
+
+    def _save_reflection_state(self) -> None:
+        try:
+            self._reflection_state_path.write_text(
+                json.dumps(self._reflection_state, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning("Failed to save reflection state: %s", exc)
+
+    def attach_extractor(self, extractor_or_caller, **extractor_kwargs) -> None:
         if isinstance(extractor_or_caller, InsightExtractor):
             self.extractor = extractor_or_caller
         else:
@@ -74,12 +83,14 @@ class MemoryHub:
                 llm_caller=extractor_or_caller,
                 **extractor_kwargs,
             )
-        logger.info("🪞 [HUB] 已绑定 insight extractor")
+        logger.info("Insight extractor attached")
 
     def record_turn(self, session_id: str, role: str, content: str) -> None:
         self.short_term.add_chat_history(session_id, role, content)
 
     def clear_session(self, session_id: str) -> bool:
+        self._reflection_state.pop(session_id, None)
+        self._save_reflection_state()
         return self.short_term.clear_chat_history(session_id)
 
     def recall(
@@ -101,7 +112,6 @@ class MemoryHub:
             user_id=user_id if user_id and user_id != "anonymous" else None,
         )
 
-        group: Optional[UserGroupProfile] = None
         if user_features:
             group_id = self.user_groups.match_group(user_features)
             group = self.user_groups.get_group_config(group_id)
@@ -110,7 +120,7 @@ class MemoryHub:
 
         combined = self._compose_context(raw_history, insights, group)
         logger.info(
-            "🔁 [HUB] recall user=%s session=%s history=%d insights=%d group=%s",
+            "recall user=%s session=%s history=%d insights=%d group=%s",
             user_id,
             session_id,
             len(raw_history),
@@ -136,10 +146,7 @@ class MemoryHub:
                 f"[用户群体] {group.category_name} / 审美:{group.aesthetic_pref} / 沟通:{group.communication_pref}"
             )
         if insights:
-            lines = [
-                f"- ({insight.topic or '见解'}) {insight.content}"
-                for insight in insights
-            ]
+            lines = [f"- ({insight.topic or '见解'}) {insight.content}" for insight in insights]
             blocks.append("[过往见解]\n" + "\n".join(lines))
         if history:
             lines = [f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history]
@@ -153,14 +160,32 @@ class MemoryHub:
         topic_subject: str = "",
     ) -> List[InsightEntry]:
         if self.extractor is None:
-            logger.warning("⚠️ [HUB] 未绑定 extractor，跳过内省")
+            logger.warning("Extractor not attached, skip reflection")
             return []
+
         turns = self.short_term.get_turns(session_id)
-        if not turns:
+        start_index = self._reflection_state.get(session_id, 0)
+        pending_turns = turns[start_index:]
+        if len(pending_turns) < 2:
+            logger.info(
+                "[MEMORY] skip reflection session=%s pending_turns=%d reason=not_enough_new_turns",
+                session_id,
+                len(pending_turns),
+            )
             return []
+
+        logger.info(
+            "[MEMORY] reflect session=%s user=%s new_turns=%d total_turns=%d topic=%s",
+            session_id,
+            user_id,
+            len(pending_turns),
+            len(turns),
+            topic_subject or "-",
+        )
+
         entries = await asyncio.to_thread(
             self.extractor.extract,
-            turns,
+            pending_turns,
             user_id,
             session_id,
             topic_subject,
@@ -169,6 +194,15 @@ class MemoryHub:
         for entry in entries:
             if await self.insights.commit_insight(entry):
                 committed.append(entry)
+
+        self._reflection_state[session_id] = len(turns)
+        self._save_reflection_state()
+        logger.info(
+            "[MEMORY] reflection finished session=%s extracted=%d committed=%d",
+            session_id,
+            len(entries),
+            len(committed),
+        )
         return committed
 
     def reflect_on_conversation_sync(
@@ -178,22 +212,50 @@ class MemoryHub:
         topic_subject: str = "",
     ) -> List[InsightEntry]:
         if self.extractor is None:
-            logger.warning("⚠️ [HUB] 未绑定 extractor，跳过内省")
+            logger.warning("Extractor not attached, skip reflection")
             return []
+
         turns = self.short_term.get_turns(session_id)
-        if not turns:
+        start_index = self._reflection_state.get(session_id, 0)
+        pending_turns = turns[start_index:]
+        if len(pending_turns) < 2:
+            logger.info(
+                "[MEMORY] skip reflection sync session=%s pending_turns=%d reason=not_enough_new_turns",
+                session_id,
+                len(pending_turns),
+            )
             return []
-        entries = self.extractor.extract(turns, user_id, session_id, topic_subject)
+
+        logger.info(
+            "[MEMORY] reflect sync session=%s user=%s new_turns=%d total_turns=%d topic=%s",
+            session_id,
+            user_id,
+            len(pending_turns),
+            len(turns),
+            topic_subject or "-",
+        )
+
+        entries = self.extractor.extract(pending_turns, user_id, session_id, topic_subject)
         committed: List[InsightEntry] = []
         for entry in entries:
             if self.insights.commit_insight_sync(entry):
                 committed.append(entry)
+
+        self._reflection_state[session_id] = len(turns)
+        self._save_reflection_state()
+        logger.info(
+            "[MEMORY] reflection sync finished session=%s extracted=%d committed=%d",
+            session_id,
+            len(entries),
+            len(committed),
+        )
         return committed
 
     def sync_persistence(self) -> None:
         self.short_term.sync_persistence()
         self.user_groups.sync_persistence()
-        logger.info("💾 [HUB] sync_persistence 完成")
+        self._save_reflection_state()
+        logger.info("Memory persistence synced")
 
     def get_stats(self) -> Dict:
         return {

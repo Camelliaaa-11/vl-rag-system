@@ -1,4 +1,4 @@
-"""长期见解库：ChromaDB + 可插拔 embedding。"""
+"""Insight archive backed by ChromaDB."""
 from __future__ import annotations
 
 import asyncio
@@ -15,38 +15,36 @@ from .models import InsightEntry
 
 logger = logging.getLogger("Memory.InsightArchive")
 
-
 EmbeddingFn = Callable[[List[str]], List[List[float]]]
 
 
 def _default_embedding_fn() -> Optional[EmbeddingFn]:
-    """尝试复用 rag.retriever 里已加载的 Qwen3 Embedding 单例。"""
+    """Reuse the same local Qwen embedding family as the main RAG path."""
     try:
-        from rag.retriever import GlobalQwenEmbeddingModel
+        from rag.retriever_v2_mix_Reranking import QwenEmbeddingFunction
 
         project_root = Path(__file__).resolve().parent.parent
-        model_path = project_root / "models" / "Qwen3-Embedding-0.6B"
-        if not model_path.exists():
-            logger.warning("⚠️ [INSIGHT] Qwen3 模型目录不存在: %s", model_path)
-            return None
-        try:
-            GlobalQwenEmbeddingModel.load(model_path)
-        except Exception as exc:
-            logger.warning("⚠️ [INSIGHT] Qwen3 Embedding 加载失败: %s", exc)
+        model_candidates = [
+            project_root / "models" / "qwen3-embedding",
+            project_root / "models" / "Qwen3-Embedding-0.6B",
+        ]
+        model_path = next((path for path in model_candidates if path.exists()), None)
+        if model_path is None:
+            logger.warning("Local Qwen embedding model not found for insight archive")
             return None
 
+        embedder = QwenEmbeddingFunction(model_path)
+
         def _encode(texts: List[str]) -> List[List[float]]:
-            return GlobalQwenEmbeddingModel.encode_documents(texts)
+            return embedder.embed_documents(texts)
 
         return _encode
     except Exception as exc:
-        logger.warning("⚠️ [INSIGHT] 无法导入 rag.retriever: %s", exc)
+        logger.warning("Insight archive embedding init failed: %s", exc)
         return None
 
 
 class InsightArchive:
-    """见解库对外接口：commit / search / delete。"""
-
     def __init__(
         self,
         db_path: Optional[Path] = None,
@@ -64,11 +62,11 @@ class InsightArchive:
         self._client = chromadb.PersistentClient(path=str(self.db_path))
         self._collection = self._client.get_or_create_collection(
             name=self.collection_name,
-            metadata={"description": "LLM 提炼的用户见解"},
+            metadata={"description": "LLM extracted user insights"},
         )
 
         logger.info(
-            "📁 [INSIGHT] 初始化: path=%s, collection=%s, fallback=%s, count=%d",
+            "Insight archive ready path=%s collection=%s fallback=%s count=%d",
             self.db_path,
             self.collection_name,
             self.fallback_mode,
@@ -85,7 +83,7 @@ class InsightArchive:
             entry.embedding = vector
             return vector
         except Exception as exc:
-            logger.error("❌ [INSIGHT] embedding 失败: %s", exc)
+            logger.error("Insight embedding failed: %s", exc)
             return None
 
     def _commit_sync(self, entry: InsightEntry) -> bool:
@@ -102,14 +100,16 @@ class InsightArchive:
                     add_kwargs["embeddings"] = [embedding]
                 self._collection.upsert(**add_kwargs)
                 logger.info(
-                    "📝 [INSIGHT] 写入见解: id=%s, topic=%s, user=%s",
+                    "[INSIGHT] committed id=%s topic=%s user=%s content=%s entities=%s",
                     entry.insight_id,
-                    entry.topic,
+                    entry.topic or "-",
                     entry.user_id,
+                    entry.content,
+                    entry.key_entities,
                 )
                 return True
             except Exception as exc:
-                logger.error("❌ [INSIGHT] 写入失败: %s", exc)
+                logger.error("Insight commit failed: %s", exc)
                 return False
 
     async def commit_insight(self, entry: InsightEntry) -> bool:
@@ -146,7 +146,7 @@ class InsightArchive:
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as exc:
-            logger.error("❌ [INSIGHT] 向量检索失败: %s", exc)
+            logger.error("Insight vector search failed: %s", exc)
             return []
 
         entries: List[InsightEntry] = []
@@ -156,7 +156,7 @@ class InsightArchive:
             try:
                 entries.append(InsightEntry.from_chroma(doc, meta or {}))
             except Exception as exc:
-                logger.warning("⚠️ [INSIGHT] 反序列化跳过: %s", exc)
+                logger.warning("Skip invalid insight payload: %s", exc)
         return entries
 
     def search_by_text(
@@ -171,7 +171,7 @@ class InsightArchive:
         try:
             vector = self.embedding_fn([query])[0]
         except Exception as exc:
-            logger.error("❌ [INSIGHT] query 编码失败，走关键词回退: %s", exc)
+            logger.error("Insight query encode failed, fallback to keyword: %s", exc)
             return self._keyword_fallback(query, top_k, user_id, session_id)
         return self.search_insights(vector, top_k, user_id, session_id)
 
@@ -192,7 +192,7 @@ class InsightArchive:
                 include=["documents", "metadatas"],
             )
         except Exception as exc:
-            logger.error("❌ [INSIGHT] 关键词回退读取失败: %s", exc)
+            logger.error("Insight keyword fallback failed: %s", exc)
             return []
 
         scored: List = []
@@ -205,6 +205,7 @@ class InsightArchive:
             if score > 0:
                 scored.append((score, doc, meta or {}))
         scored.sort(key=lambda item: item[0], reverse=True)
+
         entries: List[InsightEntry] = []
         for _, doc, meta in scored[:top_k]:
             try:
@@ -217,10 +218,10 @@ class InsightArchive:
         with self._lock:
             try:
                 self._collection.delete(ids=[insight_id])
-                logger.info("🗑️ [INSIGHT] 已删除: %s", insight_id)
+                logger.info("Insight deleted %s", insight_id)
                 return True
             except Exception as exc:
-                logger.error("❌ [INSIGHT] 删除失败: %s", exc)
+                logger.error("Insight delete failed: %s", exc)
                 return False
 
     def list_user_insights(self, user_id: str, limit: int = 100) -> List[InsightEntry]:
@@ -231,7 +232,7 @@ class InsightArchive:
                 limit=limit,
             )
         except Exception as exc:
-            logger.error("❌ [INSIGHT] 列出用户见解失败: %s", exc)
+            logger.error("List user insights failed: %s", exc)
             return []
 
         entries: List[InsightEntry] = []

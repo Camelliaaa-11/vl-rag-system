@@ -362,6 +362,55 @@
             font-size: 13px;
         }
 
+        .tts-panel {
+            position: absolute;
+            right: 0;
+            bottom: calc(100% + 10px);
+            width: min(420px, calc(100vw - 48px));
+            padding: 14px;
+            border: 1px solid rgba(138, 79, 29, 0.18);
+            border-radius: 18px;
+            background: rgba(255, 252, 247, 0.98);
+            box-shadow: 0 18px 40px rgba(75, 43, 16, 0.12);
+            display: grid;
+            gap: 10px;
+        }
+
+        .tts-panel textarea {
+            width: 100%;
+            min-height: 110px;
+            max-height: 220px;
+            resize: vertical;
+            border: 1px solid rgba(138, 79, 29, 0.18);
+            border-radius: 14px;
+            padding: 12px 14px;
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--text);
+            font: inherit;
+            line-height: 1.7;
+            outline: none;
+        }
+
+        .tts-panel textarea:focus {
+            border-color: rgba(138, 79, 29, 0.42);
+        }
+
+        .tts-meta {
+            font-size: 12px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .tts-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .tts-audio {
+            width: 100%;
+        }
+
         .composer-note {
             color: var(--muted);
             font-size: 12px;
@@ -589,6 +638,8 @@
             data() {
                 return {
                     backendUrl: (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : "http://localhost:8765",
+                    sessionId: "",
+                    userId: "anonymous",
                     input: "",
                     loading: false,
                     status: "checking",
@@ -601,9 +652,18 @@
                     lastRetrievalQuery: "",
                     lastTopicType: "",
                     lastTopicSubject: "",
+                    lastMemoryContext: "",
+                    lastMemoryInsightCount: 0,
                     lastUpdatedAt: "",
                     errorMessage: "",
                     showTestcasePanel: false,
+                    showTtsPanel: false,
+                    ttsLoading: false,
+                    ttsText: "",
+                    ttsAudioUrl: "",
+                    ttsAudioName: "",
+                    ttsError: "",
+                    ttsStatusText: "",
                     suggestions: [
                         {
                             title: "作者查询",
@@ -671,6 +731,7 @@
                 },
             },
             mounted() {
+                this.initSession();
                 this.checkStatus();
                 this.statusTimer = window.setInterval(this.checkStatus, 30000);
                 this.$nextTick(() => {
@@ -682,6 +743,9 @@
             beforeUnmount() {
                 if (this.statusTimer) {
                     window.clearInterval(this.statusTimer);
+                }
+                if (this.ttsAudioUrl) {
+                    URL.revokeObjectURL(this.ttsAudioUrl);
                 }
             },
             methods: {
@@ -722,11 +786,94 @@
                 },
                 toggleTestcasePanel() {
                     this.showTestcasePanel = !this.showTestcasePanel;
+                    if (this.showTestcasePanel) {
+                        this.showTtsPanel = false;
+                    }
                 },
                 chooseRandomTestcase() {
                     if (!this.testCases.length) return;
                     const randomIndex = Math.floor(Math.random() * this.testCases.length);
                     this.insertSuggestion(this.testCases[randomIndex].text);
+                },
+                toggleTtsPanel() {
+                    this.showTtsPanel = !this.showTtsPanel;
+                    if (this.showTtsPanel) {
+                        this.showTestcasePanel = false;
+                        this.prepareTtsText();
+                    }
+                },
+                prepareTtsText() {
+                    const latestAssistant = [...this.messages]
+                        .reverse()
+                        .find(item => item.role === "assistant" && item.content);
+
+                    if (latestAssistant?.content) {
+                        this.ttsText = latestAssistant.content;
+                        return;
+                    }
+
+                    if (this.input.trim()) {
+                        this.ttsText = this.input.trim();
+                    }
+                },
+                resetTtsAudio() {
+                    if (this.ttsAudioUrl) {
+                        URL.revokeObjectURL(this.ttsAudioUrl);
+                    }
+                    this.ttsAudioUrl = "";
+                    this.ttsAudioName = "";
+                },
+                async synthesizeTts() {
+                    const text = this.ttsText.trim();
+                    if (!text || this.ttsLoading) return;
+
+                    this.ttsLoading = true;
+                    this.ttsError = "";
+                    this.ttsStatusText = "";
+                    this.resetTtsAudio();
+
+                    try {
+                        const response = await fetch(`${this.backendUrl}/api/tts/synthesize`, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({ text }),
+                        });
+
+                        if (!response.ok) {
+                            let detail = `HTTP ${response.status}`;
+                            try {
+                                const payload = await response.json();
+                                detail = payload.detail || payload.message || detail;
+                            } catch (e) {}
+                            throw new Error(detail);
+                        }
+
+                        const blob = await response.blob();
+                        const contentDisposition = response.headers.get("Content-Disposition") || "";
+                        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+                        this.ttsAudioName = filenameMatch ? filenameMatch[1] : "tts_output.wav";
+                        this.ttsAudioUrl = URL.createObjectURL(blob);
+                        this.ttsStatusText = "音频已生成，可直接播放或下载。";
+
+                        this.$nextTick(() => {
+                            this.$refs.ttsAudioPlayer?.play?.().catch(() => {});
+                        });
+                    } catch (error) {
+                        this.ttsError = `TTS 合成失败: ${error.message}`;
+                    } finally {
+                        this.ttsLoading = false;
+                    }
+                },
+                initSession() {
+                    const existing = window.sessionStorage.getItem("vl_rag_session_id");
+                    if (existing) {
+                        this.sessionId = existing;
+                        return;
+                    }
+                    this.sessionId = `web_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+                    window.sessionStorage.setItem("vl_rag_session_id", this.sessionId);
                 },
                 clearConversation() {
                     this.messages = [];
@@ -737,10 +884,19 @@
                     this.lastRetrievalQuery = "";
                     this.lastTopicType = "";
                     this.lastTopicSubject = "";
+                    this.lastMemoryContext = "";
+                    this.lastMemoryInsightCount = 0;
                     this.lastUpdatedAt = "";
                     this.errorMessage = "";
                     this.showTestcasePanel = false;
+                    this.showTtsPanel = false;
+                    this.ttsText = "";
+                    this.ttsError = "";
+                    this.ttsStatusText = "";
+                    this.resetTtsAudio();
                     this.input = "";
+                    this.sessionId = `web_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+                    window.sessionStorage.setItem("vl_rag_session_id", this.sessionId);
                     this.$nextTick(() => {
                         this.resizeTextarea();
                         this.scrollToBottom(true);
@@ -780,6 +936,8 @@
 
                     const formData = new FormData();
                     formData.append("question", question);
+                    formData.append("session_id", this.sessionId);
+                    formData.append("user_id", this.userId);
                     if (historyPayload.length > 0) {
                         formData.append("history", JSON.stringify(historyPayload));
                     }
@@ -806,6 +964,10 @@
                         this.lastRetrievalQuery = payload.data?.retrieval_query || "";
                         this.lastTopicType = payload.data?.topic_type || "";
                         this.lastTopicSubject = payload.data?.topic_subject || "";
+                        this.lastMemoryContext = payload.data?.memory_context || "";
+                        this.lastMemoryInsightCount = payload.data?.memory_insight_count || 0;
+                        this.sessionId = payload.data?.session_id || this.sessionId;
+                        window.sessionStorage.setItem("vl_rag_session_id", this.sessionId);
                         this.lastUpdatedAt = this.formatNow();
 
                         this.messages.push({
@@ -963,9 +1125,49 @@
                         <button class="feature-button" type="button" @click="showComingSoon('ASR')">
                             ASR
                         </button>
-                                        <button class="feature-button" type="button" @click="showComingSoon('TTS')">
+                                        <button class="feature-button" type="button" @click="toggleTtsPanel">
                                             TTS
                                         </button>
+                                        <div v-if="showTtsPanel" class="tts-panel">
+                                            <div class="tts-meta">
+                                                默认载入最近一条助手回复，也可以直接修改成你想朗读的文本。
+                                            </div>
+                                            <textarea
+                                                v-model="ttsText"
+                                                placeholder="请输入要朗读的文本，或先发起一轮问答后直接朗读最近回复。"
+                                            ></textarea>
+                                            <div class="tts-actions">
+                                                <button class="feature-button" type="button" @click="prepareTtsText">
+                                                    载入最近回复
+                                                </button>
+                                                <button class="send-button" type="button" :disabled="ttsLoading || !ttsText.trim()" @click="synthesizeTts">
+                                                    {{ ttsLoading ? '合成中...' : '生成并播放' }}
+                                                </button>
+                                                <a
+                                                    v-if="ttsAudioUrl"
+                                                    class="feature-button"
+                                                    :href="ttsAudioUrl"
+                                                    :download="ttsAudioName || 'tts_output.wav'"
+                                                    style="text-decoration:none;"
+                                                >
+                                                    下载音频
+                                                </a>
+                                            </div>
+                                            <div v-if="ttsStatusText" class="tts-meta" style="color: var(--success);">
+                                                {{ ttsStatusText }}
+                                            </div>
+                                            <div v-if="ttsError" class="tts-meta" style="color: var(--error);">
+                                                {{ ttsError }}
+                                            </div>
+                                            <audio
+                                                v-if="ttsAudioUrl"
+                                                ref="ttsAudioPlayer"
+                                                class="tts-audio"
+                                                :src="ttsAudioUrl"
+                                                controls
+                                                autoplay
+                                            ></audio>
+                                        </div>
                                         <button class="send-button" :disabled="!canSend" @click="sendQuestion">
                                             {{ loading ? '检索中...' : '发送问题' }}
                                         </button>
@@ -1002,6 +1204,10 @@
                                     <strong>检索内容</strong>
                                     <span class="context-pre">{{ contextPreview }}</span>
                                 </div>
+                                <div class="context-item">
+                                    <strong>记忆补充</strong>
+                                    <span class="context-pre">{{ lastMemoryContext || '本轮未命中可用记忆' }}</span>
+                                </div>
                             </div>
                         </section>
 
@@ -1011,6 +1217,10 @@
                                 <div class="stat-item">
                                     <strong>后端地址</strong>
                                     <span>{{ backendUrl }}</span>
+                                </div>
+                                <div class="stat-item">
+                                    <strong>会话 ID</strong>
+                                    <span>{{ sessionId || '未建立' }}</span>
                                 </div>
                                 <div class="stat-item">
                                     <strong>路由状态</strong>
