@@ -25,12 +25,23 @@ class Config:
     MEMORY_DIR = DATA_DIR / "memory"
     MEMORY_SESSIONS_DIR = MEMORY_DIR / "sessions"
     MEMORY_INSIGHT_DB = MEMORY_DIR / "insight_db"
+    MEMORY_EVENT_DB = MEMORY_DIR / "event_db"
+    MEMORY_LAB_FACT_DB = MEMORY_DIR / "lab_fact_db"
     MEMORY_USER_GROUPS_PATH = MEMORY_DIR / "user_groups.json"
+    MEMORY_USER_REGISTRY_PATH = MEMORY_DIR / "user_registry.json"
     MEMORY_SHORT_TERM_MAX_TURNS = 40
     MEMORY_INSIGHT_COLLECTION = "insight_archive"
+    MEMORY_EVENT_COLLECTION = "event_archive"
+    MEMORY_LAB_FACT_COLLECTION = "lab_fact_memory"
 
-    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")
-    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "deepseek-chat")
+    VLM_PROVIDER = os.getenv("VLM_PROVIDER", "qwen_omni").strip().lower()
+    QWEN_OMNI_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+    QWEN_OMNI_BASE_URL = os.getenv("QWEN_OMNI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    QWEN_OMNI_MODEL_NAME = os.getenv("QWEN_OMNI_MODEL_NAME", "qwen3-omni-flash")
+    DEEPSEEK_MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
+    VLM_MODEL_NAME = QWEN_OMNI_MODEL_NAME if VLM_PROVIDER == "qwen_omni" else DEEPSEEK_MODEL_NAME
+    LLM_PROVIDER = VLM_PROVIDER
+    LLM_MODEL_NAME = VLM_MODEL_NAME
     EMBEDDING_MODEL_PATH = MODELS_DIR / "bge-small-zh-v1.5"
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -57,9 +68,9 @@ class Config:
     ASR_SAVE_DIR = DATA_DIR / "voice_to_text"
     AUDIO_OUT_DIR = DATA_DIR / "audio_out"
 
-    XF_APPID = os.getenv("XF_APPID", "812ac76a")
-    XF_API_KEY = os.getenv("XF_API_KEY", "46834d00f6389d11d8cb73206c756e72")
-    XF_API_SECRET = os.getenv("XF_API_SECRET", "ODM1NTYyNDU3MGY0NmVlZjc1MjA2MjVi")
+    XF_APPID = os.getenv("XF_APPID", "")
+    XF_API_KEY = os.getenv("XF_API_KEY", "")
+    XF_API_SECRET = os.getenv("XF_API_SECRET", "")
 
     TTS_PROVIDER = os.getenv("TTS_PROVIDER", "xf").lower()
     TTS_OUTPUT_DIR = AUDIO_OUT_DIR
@@ -125,6 +136,8 @@ class Config:
             "MEMORY_DIR",
             "MEMORY_SESSIONS_DIR",
             "MEMORY_INSIGHT_DB",
+            "MEMORY_EVENT_DB",
+            "MEMORY_LAB_FACT_DB",
         ]:
             path = getattr(cls, attr)
             path.mkdir(parents=True, exist_ok=True)

@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,9 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import Config
-from memory import MemoryHub
+from memory import MemoryHub, UserRegistry
 from memory.models import UserGroupProfile
-from services.llm_service import LLMService
+from services.vlm_service import VLMService
 from services.tts_service import TTSService
 
 logger = logging.getLogger("Backend")
@@ -31,28 +32,112 @@ def _model_to_dict(model):
     return model.dict()
 
 
-model_inference: Optional[LLMService] = None
+model_inference: Optional[VLMService] = None
 try:
-    model_inference = LLMService()
+    model_inference = VLMService()
 except SystemExit as exc:
-    logger.warning("[BOOT] LLMService init failed code=%s", exc.code)
+    logger.warning("[BOOT] VLMService init failed code=%s", exc.code)
 except Exception as exc:
-    logger.warning("[BOOT] LLMService init error: %s", exc)
+    logger.warning("[BOOT] VLMService init error: %s", exc)
 
 
 memory_hub = MemoryHub()
+user_registry = UserRegistry()
 tts_service = TTSService()
 
 
 def _llm_caller_for_memory(messages: List[Dict[str, str]]) -> str:
     if model_inference is None:
-        raise RuntimeError("LLMService 未初始化，无法执行 memory reflection")
-    if model_inference.provider == "deepseek":
-        return model_inference._call_deepseek(messages)
-    if model_inference.provider == "ollama":
-        system_prompt = next((m["content"] for m in messages if m.get("role") == "system"), "")
-        return model_inference._call_ollama(messages, system_prompt)
-    raise RuntimeError(f"unsupported LLM provider for extractor: {model_inference.provider}")
+        raise RuntimeError("VLMService not initialized, cannot run memory reflection")
+    return model_inference.call_text_model(messages)
+
+
+def _extract_name_from_input(text: str) -> Optional[str]:
+    normalized = (text or "").strip()
+    if not normalized:
+        return None
+
+    patterns = [
+        r"^(?:我叫|我是|名字是|你可以叫我|叫我)\s*([^\s，。！？,.!?]{1,12})$",
+        r"^([^\s，。！？,.!?]{1,12})$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            candidate = match.group(1).strip("，。！？,.!? ")
+            if candidate:
+                return candidate
+    return None
+
+
+def _identity_payload(
+    answer: str,
+    session_id: str,
+    user_id: str = "anonymous",
+    user_name: str = "",
+    identity_status: str = "identified",
+) -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "data": {
+            "answer": answer,
+            "context": "",
+            "topic_type": "identity",
+            "topic_subject": user_name or "identity",
+            "retrieval_query": "",
+            "memory_context": "",
+            "memory_group": None,
+            "memory_insight_count": 0,
+            "memory_event_count": 0,
+            "session_id": session_id,
+            "user_id": user_id,
+            "user_name": user_name,
+            "identity_status": identity_status,
+            "provider": "",
+            "model_name": "",
+            "confidence": "high",
+        },
+        "message": "processed",
+        "timestamp": datetime.datetime.now().isoformat(),
+    }
+
+
+def _is_truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _tts_media_type(path: Path) -> str:
+    return "audio/wav" if path.suffix.lower() == ".wav" else "audio/mpeg"
+
+
+def _build_tts_payload(text: str, voice: Optional[str] = None) -> Dict[str, Any]:
+    if not text or not text.strip():
+        return {"tts_enabled": False}
+
+    output_path = tts_service.synthesize(text.strip(), voice_type=voice)
+    if not output_path:
+        return {
+            "tts_enabled": True,
+            "tts_status": "error",
+            "tts_error": "TTS synthesis failed",
+        }
+
+    audio_file = Path(output_path)
+    return {
+        "tts_enabled": True,
+        "tts_status": "ok",
+        "audio_url": f"/api/tts/audio/{audio_file.name}",
+        "audio_filename": audio_file.name,
+        "audio_media_type": _tts_media_type(audio_file),
+    }
+
+
+def _attach_tts_payload(response: Dict[str, Any], enabled: bool, voice: Optional[str] = None) -> Dict[str, Any]:
+    if not enabled:
+        return response
+    data = response.setdefault("data", {})
+    data.update(_build_tts_payload(data.get("answer", ""), voice=voice))
+    return response
 
 
 async def _run_memory_reflection(session_id: str, user_id: str, topic_subject: str) -> None:
@@ -62,11 +147,12 @@ async def _run_memory_reflection(session_id: str, user_id: str, topic_subject: s
             user_id=user_id,
             topic_subject=topic_subject,
         )
-        if committed:
+        if committed.get("insights") or committed.get("events"):
             logger.info(
-                "[MEMORY] async reflection committed session=%s count=%d",
+                "[MEMORY] async reflection committed session=%s insights=%d events=%d",
                 session_id,
-                len(committed),
+                len(committed.get("insights", [])),
+                len(committed.get("events", [])),
             )
 
 
@@ -76,7 +162,7 @@ if model_inference is not None:
     except Exception as exc:
         logger.warning("[MEMORY] attach extractor failed: %s", exc)
 else:
-    logger.info("[MEMORY] extractor unavailable because LLMService is not ready")
+    logger.info("[MEMORY] extractor unavailable because VLMService is not ready")
 
 
 app.add_middleware(
@@ -130,15 +216,18 @@ async def chat_endpoint(
     session_id: str = Form(None),
     user_id: str = Form("anonymous"),
     user_features: str = Form(None),
+    tts_enabled: str = Form("false"),
+    tts_voice: str = Form(None),
 ):
     logger.info("=== incoming /chat request ===")
 
     image_data = None
-    current_question = question if question else "请识别这张图中的展品信息"
+    current_question = question if question else "请描述当前画面中的主要物体和场景。"
     current_session_id = (session_id or "").strip() or f"session_{uuid4().hex[:12]}"
     current_user_id = (user_id or "anonymous").strip() or "anonymous"
     parsed_history = None
     parsed_user_features = None
+    should_synthesize_tts = _is_truthy(tts_enabled)
 
     if image:
         try:
@@ -172,13 +261,45 @@ async def chat_endpoint(
             logger.warning("parse user_features failed, ignore request user_features: %s", exc)
 
     if model_inference is None:
-        logger.error("[CHAT] LLMService not initialized")
+        logger.error("[CHAT] VLMService not initialized")
         return {
             "status": "error",
-            "message": "后端 LLMService 尚未初始化，可能是 RAG 向量库未构建。",
+            "message": "后端 VLMService 尚未初始化。",
         }
 
     try:
+        resolved_user = user_registry.resolve_user(current_user_id, current_session_id)
+        if resolved_user is None:
+            if image_data:
+                current_user_id = current_user_id if current_user_id != "anonymous" else "anonymous"
+                current_user_name = ""
+            elif user_registry.is_waiting_name(current_session_id):
+                candidate_name = _extract_name_from_input(current_question)
+                if candidate_name:
+                    resolved_user = user_registry.register_name(candidate_name, current_session_id)
+                    return _attach_tts_payload(_identity_payload(
+                        answer=f"记住了，你叫{resolved_user.name}。现在可以继续问我画面里的物体、位置和特征这些内容。",
+                        session_id=current_session_id,
+                        user_id=resolved_user.user_id,
+                        user_name=resolved_user.name,
+                        identity_status="name_registered",
+                    ), should_synthesize_tts, tts_voice)
+                return _attach_tts_payload(_identity_payload(
+                    answer="我还没记住你的名字。先告诉我你叫什么，我再继续陪你聊。",
+                    session_id=current_session_id,
+                    identity_status="needs_name",
+                ), should_synthesize_tts, tts_voice)
+            else:
+                user_registry.mark_waiting_name(current_session_id)
+                return _attach_tts_payload(_identity_payload(
+                    answer="第一次见面，先告诉我你叫什么名字吧。我记住之后，后面就能按你的记录继续聊。",
+                    session_id=current_session_id,
+                    identity_status="needs_name",
+                ), should_synthesize_tts, tts_voice)
+        else:
+            current_user_id = resolved_user.user_id
+            current_user_name = resolved_user.name
+
         memory_hub.record_turn(current_session_id, "user", current_question)
         recall_result = memory_hub.recall(
             query=current_question,
@@ -208,7 +329,7 @@ async def chat_endpoint(
         )
 
         logger.info("chat completed, answer length=%d", len(result["answer"]))
-        return {
+        response_payload = {
             "status": "success",
             "data": {
                 "answer": result["answer"],
@@ -219,15 +340,22 @@ async def chat_endpoint(
                 "memory_context": result.get("memory_context", ""),
                 "memory_group": _model_to_dict(recall_result.user_group) if recall_result.user_group else None,
                 "memory_insight_count": len(recall_result.insights),
+                "memory_event_count": len(recall_result.events),
                 "session_id": current_session_id,
                 "user_id": current_user_id,
+                "user_name": current_user_name,
+                "identity_status": "identified",
                 "provider": result.get("provider", ""),
                 "model_name": result.get("model_name", ""),
+                "route": result.get("route", ""),
+                "route_reason": result.get("route_reason", ""),
+                "used_image": result.get("used_image", False),
                 "confidence": "high",
             },
-            "message": "处理成功",
+            "message": "processed",
             "timestamp": datetime.datetime.now().isoformat(),
         }
+        return _attach_tts_payload(response_payload, should_synthesize_tts, tts_voice)
     except Exception as exc:
         logger.exception("chat failed: %s", exc)
         return {"status": "error", "message": f"模型处理异常: {str(exc)}"}
@@ -267,6 +395,11 @@ class GroupProfileIn(BaseModel):
     response_style: Dict[str, str] = Field(default_factory=dict)
 
 
+class UserNameIn(BaseModel):
+    session_id: str
+    name: str
+
+
 class TTSSynthesizeIn(BaseModel):
     text: str
     voice: Optional[str] = None
@@ -282,6 +415,26 @@ class TTSConfigIn(BaseModel):
 @app.get("/memory/stats")
 def memory_stats():
     return {"status": "ok", "data": memory_hub.get_stats()}
+
+
+@app.get("/memory/users")
+def memory_list_users():
+    users = user_registry.list_users()
+    return {"status": "ok", "count": len(users), "data": [_model_to_dict(user) for user in users]}
+
+
+@app.get("/memory/user/{user_id}")
+def memory_get_user(user_id: str):
+    user = user_registry.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"user not found: {user_id}")
+    return {"status": "ok", "data": _model_to_dict(user)}
+
+
+@app.post("/memory/user/name")
+def memory_register_user_name(payload: UserNameIn):
+    record = user_registry.register_name(payload.name.strip(), payload.session_id)
+    return {"status": "ok", "data": _model_to_dict(record)}
 
 
 @app.post("/memory/turn")
@@ -329,8 +482,8 @@ def memory_recall(payload: RecallIn):
 
 @app.post("/memory/reflect")
 async def memory_reflect(payload: ReflectIn):
-    if memory_hub.extractor is None:
-        raise HTTPException(status_code=503, detail="insight extractor 未绑定")
+    if memory_hub.extractor is None and memory_hub.event_extractor is None:
+        raise HTTPException(status_code=503, detail="memory extractors unavailable")
     try:
         committed = await memory_hub.reflect_on_conversation(
             session_id=payload.session_id,
@@ -342,8 +495,10 @@ async def memory_reflect(payload: ReflectIn):
         raise HTTPException(status_code=500, detail=str(exc))
     return {
         "status": "ok",
-        "committed": [_model_to_dict(entry) for entry in committed],
-        "count": len(committed),
+        "insights": [_model_to_dict(entry) for entry in committed.get("insights", [])],
+        "events": [_model_to_dict(entry) for entry in committed.get("events", [])],
+        "insight_count": len(committed.get("insights", [])),
+        "event_count": len(committed.get("events", [])),
     }
 
 
@@ -362,6 +517,17 @@ def memory_list_insights(user_id: str, limit: int = 50):
 def memory_delete_insight(insight_id: str):
     ok = memory_hub.insights.delete_insight(insight_id)
     return {"status": "ok" if ok else "error", "insight_id": insight_id}
+
+
+@app.get("/memory/events/{user_id}")
+def memory_list_events(user_id: str, limit: int = 50):
+    entries = memory_hub.events.list_user_events(user_id, limit=limit)
+    return {
+        "status": "ok",
+        "user_id": user_id,
+        "count": len(entries),
+        "data": [_model_to_dict(entry) for entry in entries],
+    }
 
 
 @app.get("/memory/groups")
@@ -422,6 +588,15 @@ def tts_synthesize(payload: TTSSynthesizeIn):
     audio_file = Path(output_path)
     media_type = "audio/wav" if audio_file.suffix.lower() == ".wav" else "audio/mpeg"
     return FileResponse(path=output_path, media_type=media_type, filename=audio_file.name)
+
+
+@app.get("/api/tts/audio/{filename}")
+def tts_audio(filename: str):
+    safe_name = Path(filename).name
+    audio_file = Config.TTS_OUTPUT_DIR / safe_name
+    if not audio_file.exists() or not audio_file.is_file():
+        raise HTTPException(status_code=404, detail="audio file not found")
+    return FileResponse(path=str(audio_file), media_type=_tts_media_type(audio_file), filename=safe_name)
 
 
 if __name__ == "__main__":

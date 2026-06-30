@@ -411,6 +411,37 @@
             width: 100%;
         }
 
+        .vision-upload {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding-top: 10px;
+            border-top: 1px solid rgba(138, 79, 29, 0.12);
+        }
+
+        .vision-upload input[type="file"] {
+            display: none;
+        }
+
+        .vision-preview {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            max-width: 100%;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .vision-preview img {
+            width: 52px;
+            height: 52px;
+            object-fit: cover;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: var(--paper);
+        }
+
         .composer-note {
             color: var(--muted);
             font-size: 12px;
@@ -639,7 +670,8 @@
                 return {
                     backendUrl: (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : "http://localhost:8765",
                     sessionId: "",
-                    userId: "anonymous",
+                    userId: window.localStorage.getItem("vl_rag_user_id") || "anonymous",
+                    userName: window.localStorage.getItem("vl_rag_user_name") || "",
                     input: "",
                     loading: false,
                     status: "checking",
@@ -654,10 +686,17 @@
                     lastTopicSubject: "",
                     lastMemoryContext: "",
                     lastMemoryInsightCount: 0,
+                    lastRoute: "",
+                    lastRouteReason: "",
+                    lastUsedImage: false,
                     lastUpdatedAt: "",
                     errorMessage: "",
                     showTestcasePanel: false,
                     showTtsPanel: false,
+                    selectedImage: null,
+                    selectedImageName: "",
+                    selectedImagePreviewUrl: "",
+                    ttsAutoEnabled: false,
                     ttsLoading: false,
                     ttsText: "",
                     ttsAudioUrl: "",
@@ -689,6 +728,10 @@
                             title: "面向观众解释",
                             text: "请用更容易理解的方式介绍这个作品的核心价值。",
                         },
+                        {
+                            title: "图片描述",
+                            text: "请描述这张图片里有什么。",
+                        },
                     ],
                     testCases: [
                         {
@@ -710,6 +753,10 @@
                         {
                             title: "通俗介绍",
                             text: "请用更容易理解的方式介绍灵视。",
+                        },
+                        {
+                            title: "视觉测试",
+                            text: "请看看这张图片，并说出主要物体和位置。",
                         },
                     ],
                 };
@@ -746,6 +793,9 @@
                 }
                 if (this.ttsAudioUrl) {
                     URL.revokeObjectURL(this.ttsAudioUrl);
+                }
+                if (this.selectedImagePreviewUrl) {
+                    URL.revokeObjectURL(this.selectedImagePreviewUrl);
                 }
             },
             methods: {
@@ -823,6 +873,36 @@
                     this.ttsAudioUrl = "";
                     this.ttsAudioName = "";
                 },
+                onImageSelected(event) {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    if (!file.type.startsWith("image/")) {
+                        this.errorMessage = "请选择图片文件。";
+                        event.target.value = "";
+                        return;
+                    }
+                    if (this.selectedImagePreviewUrl) {
+                        URL.revokeObjectURL(this.selectedImagePreviewUrl);
+                    }
+                    this.selectedImage = file;
+                    this.selectedImageName = file.name;
+                    this.selectedImagePreviewUrl = URL.createObjectURL(file);
+                    if (!this.input.trim()) {
+                        this.input = "请描述这张图片里有什么。";
+                        this.$nextTick(() => this.resizeTextarea());
+                    }
+                },
+                clearSelectedImage() {
+                    if (this.selectedImagePreviewUrl) {
+                        URL.revokeObjectURL(this.selectedImagePreviewUrl);
+                    }
+                    this.selectedImage = null;
+                    this.selectedImageName = "";
+                    this.selectedImagePreviewUrl = "";
+                    if (this.$refs.imageInput) {
+                        this.$refs.imageInput.value = "";
+                    }
+                },
                 async synthesizeTts() {
                     const text = this.ttsText.trim();
                     if (!text || this.ttsLoading) return;
@@ -867,6 +947,14 @@
                     }
                 },
                 initSession() {
+                    const existingUserId = window.localStorage.getItem("vl_rag_user_id");
+                    const existingUserName = window.localStorage.getItem("vl_rag_user_name");
+                    if (existingUserId) {
+                        this.userId = existingUserId;
+                    }
+                    if (existingUserName) {
+                        this.userName = existingUserName;
+                    }
                     const existing = window.sessionStorage.getItem("vl_rag_session_id");
                     if (existing) {
                         this.sessionId = existing;
@@ -886,6 +974,9 @@
                     this.lastTopicSubject = "";
                     this.lastMemoryContext = "";
                     this.lastMemoryInsightCount = 0;
+                    this.lastRoute = "";
+                    this.lastRouteReason = "";
+                    this.lastUsedImage = false;
                     this.lastUpdatedAt = "";
                     this.errorMessage = "";
                     this.showTestcasePanel = false;
@@ -894,6 +985,7 @@
                     this.ttsError = "";
                     this.ttsStatusText = "";
                     this.resetTtsAudio();
+                    this.clearSelectedImage();
                     this.input = "";
                     this.sessionId = `web_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
                     window.sessionStorage.setItem("vl_rag_session_id", this.sessionId);
@@ -924,6 +1016,7 @@
                     this.messages.push({
                         role: "user",
                         content: question,
+                        imageName: this.selectedImageName,
                         time: this.formatNow(),
                     });
 
@@ -938,6 +1031,10 @@
                     formData.append("question", question);
                     formData.append("session_id", this.sessionId);
                     formData.append("user_id", this.userId);
+                    formData.append("tts_enabled", this.ttsAutoEnabled ? "true" : "false");
+                    if (this.selectedImage) {
+                        formData.append("image", this.selectedImage, this.selectedImage.name);
+                    }
                     if (historyPayload.length > 0) {
                         formData.append("history", JSON.stringify(historyPayload));
                     }
@@ -966,8 +1063,17 @@
                         this.lastTopicSubject = payload.data?.topic_subject || "";
                         this.lastMemoryContext = payload.data?.memory_context || "";
                         this.lastMemoryInsightCount = payload.data?.memory_insight_count || 0;
+                        this.lastRoute = payload.data?.route || "";
+                        this.lastRouteReason = payload.data?.route_reason || "";
+                        this.lastUsedImage = !!payload.data?.used_image;
                         this.sessionId = payload.data?.session_id || this.sessionId;
+                        this.userId = payload.data?.user_id || this.userId;
+                        this.userName = payload.data?.user_name || this.userName;
                         window.sessionStorage.setItem("vl_rag_session_id", this.sessionId);
+                        window.localStorage.setItem("vl_rag_user_id", this.userId);
+                        if (this.userName) {
+                            window.localStorage.setItem("vl_rag_user_name", this.userName);
+                        }
                         this.lastUpdatedAt = this.formatNow();
 
                         this.messages.push({
@@ -976,8 +1082,24 @@
                             time: this.lastUpdatedAt,
                         });
 
+                        if (payload.data?.audio_url) {
+                            this.resetTtsAudio();
+                            this.ttsText = answer;
+                            this.ttsAudioName = payload.data.audio_filename || "tts_output.mp3";
+                            this.ttsAudioUrl = `${this.backendUrl}${payload.data.audio_url}`;
+                            this.ttsStatusText = "回复音频已生成。";
+                            this.$nextTick(() => {
+                                this.$refs.ttsAudioPlayer?.play?.().catch(() => {});
+                            });
+                        } else if (payload.data?.tts_status === "error") {
+                            this.ttsError = payload.data.tts_error || "TTS 合成失败";
+                        }
+
                         this.status = "online";
-                        this.statusText = "知识问答服务在线";
+                        this.statusText = this.lastUsedImage ? "Qwen 视觉调用完成" : "知识问答服务在线";
+                        if (this.selectedImage) {
+                            this.clearSelectedImage();
+                        }
                         this.$nextTick(() => {
                             this.scrollToBottom(true);
                         });
@@ -1030,13 +1152,13 @@
                             <div class="eyebrow">VL-RAG-System / Knowledge QA</div>
                             <h1>技心知识问答台</h1>
                             <p>
-                                这个界面围绕当前项目已实现的 RAG 能力重写。
-                                前端负责稳定提问与结果展示，后端负责检索展品知识并调用大模型生成回答。
+                                这个界面支持文本知识问答和图片视觉测试。
+                                文本问题保留原有问答体验，附加图片时可验证 Qwen Omni 视觉服务。
                             </p>
 
                             <div class="toolbar">
                                 <div :class="statusClass">{{ statusText }}</div>
-                                <div class="meta-chip">当前模式：知识问答</div>
+                                <div class="meta-chip">当前模式：文本问答 / Qwen 视觉测试</div>
                                 <button class="ghost-button" @click="checkStatus">刷新状态</button>
                                 <button class="ghost-button" @click="clearConversation">清空对话</button>
                                 <a class="ghost-button" href="/memory-test" style="text-decoration:none;">记忆系统测试台 →</a>
@@ -1051,8 +1173,8 @@
                             <div v-if="messages.length === 0" class="empty-state">
                                 <h2 style="margin:0;font-size:24px;">从展品知识开始提问</h2>
                                 <p style="margin:10px 0 0;color:var(--muted);line-height:1.8;">
-                                    建议优先问作品名称、设计作者、展区、技术特点、设计动机、灵感来源等问题。
-                                    当前版本默认走 RAG 检索 + DeepSeek API。
+                                    文本问题可继续测试展品知识库；选择图片后可提问“图里有什么”“这个是什么颜色”等视觉问题。
+                                    返回的 provider、model、used_image 会显示在右侧。
                                 </p>
                                 <div class="empty-grid">
                                     <button
@@ -1078,6 +1200,9 @@
                                         {{ message.role === 'user' ? '提问' : '技心' }} · {{ message.time }}
                                     </div>
                                     <div class="bubble">{{ message.content }}</div>
+                                    <div v-if="message.imageName" class="message-meta">
+                                        已附加图片：{{ message.imageName }}
+                                    </div>
                                 </article>
 
                                 <article v-if="loading" class="message assistant">
@@ -1096,9 +1221,29 @@
                                     @keydown="onEnter"
                                     placeholder="请输入关于展品、作者、展区、设计背景、技术特点等问题。按 Enter 发送，Shift + Enter 换行。"
                                 ></textarea>
+                                <div class="vision-upload">
+                                    <label class="feature-button" for="visionImageInput">
+                                        选择图片
+                                    </label>
+                                    <input
+                                        id="visionImageInput"
+                                        ref="imageInput"
+                                        type="file"
+                                        accept="image/*"
+                                        @change="onImageSelected"
+                                    >
+                                    <div v-if="selectedImagePreviewUrl" class="vision-preview">
+                                        <img :src="selectedImagePreviewUrl" alt="已选择图片预览">
+                                        <span>{{ selectedImageName }}</span>
+                                        <button class="ghost-button" type="button" @click="clearSelectedImage">移除</button>
+                                    </div>
+                                    <div v-else class="tts-meta">
+                                        上传图片后，本轮会通过后端 VLMService 走 Qwen Omni 视觉链路。
+                                    </div>
+                                </div>
                                 <div class="composer-footer">
                                     <div class="composer-note">
-                                        回答来自当前项目的知识库检索与大模型生成结果。若后端未配置 DeepSeek Key，请先设置 DEEPSEEK_API_KEY。
+                                        文本语音主链路仍可保留 DeepSeek；附加图片时用于验证 Qwen Omni 视觉服务。
                                     </div>
                     <div class="composer-actions">
                         <div class="testcase-wrap">
@@ -1128,6 +1273,10 @@
                                         <button class="feature-button" type="button" @click="toggleTtsPanel">
                                             TTS
                                         </button>
+                                        <label class="feature-button" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+                                            <input v-model="ttsAutoEnabled" type="checkbox">
+                                            自动朗读
+                                        </label>
                                         <div v-if="showTtsPanel" class="tts-panel">
                                             <div class="tts-meta">
                                                 默认载入最近一条助手回复，也可以直接修改成你想朗读的文本。
@@ -1235,14 +1384,26 @@
                                     <span>{{ lastModel || '等待首轮回答' }}</span>
                                 </div>
                                 <div class="stat-item">
+                                    <strong>VLM 路由</strong>
+                                    <span>{{ lastRoute || '等待首轮回答' }}</span>
+                                </div>
+                                <div class="stat-item">
+                                    <strong>是否使用图片</strong>
+                                    <span>{{ lastQuestion ? (lastUsedImage ? '是' : '否') : '等待首轮回答' }}</span>
+                                </div>
+                                <div class="stat-item">
+                                    <strong>路由原因</strong>
+                                    <span>{{ lastRouteReason || '等待首轮回答' }}</span>
+                                </div>
+                                <div class="stat-item">
                                     <strong>最近更新时间</strong>
                                     <span>{{ lastUpdatedAt || '暂无' }}</span>
                                 </div>
                             </div>
                             <div class="tag-row">
                                 <span class="tag">HTML + Vue 3</span>
-                                <span class="tag">RAG 问答</span>
-                                <span class="tag">DeepSeek API</span>
+                                <span class="tag">RAG + VLM</span>
+                                <span class="tag">Qwen Omni 可测</span>
                             </div>
                         </section>
                     </aside>

@@ -20,3 +20,6 @@ service.log
 
 # Local embedding models
 models/
+
+# Weekly reports
+周报/
